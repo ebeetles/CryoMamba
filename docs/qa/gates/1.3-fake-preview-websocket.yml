@@ -4,7 +4,7 @@ story_title: "Implement Fake Preview WebSocket Streaming"
 gate: "PASS"
 status_reason: "High quality implementation with comprehensive WebSocket streaming, proper data models, and good test coverage. All acceptance criteria met."
 reviewer: "Quinn (Test Architect)"
-updated: "2024-12-19T00:00:00Z"
+updated: "2025-10-13T00:00:00Z"
 
 # Always present but only active when WAIVED
 waiver: { active: false }
