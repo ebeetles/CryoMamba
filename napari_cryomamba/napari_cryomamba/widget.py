@@ -55,6 +55,11 @@ class CryoMambaWidget(QWidget):
         self.toggle_3d_button.setEnabled(False)
         viz_layout.addWidget(self.toggle_3d_button)
         
+        self.clear_button = QPushButton("Clear Volume")
+        self.clear_button.clicked.connect(self.clear_volume)
+        self.clear_button.setEnabled(False)
+        viz_layout.addWidget(self.clear_button)
+        
         viz_group.setLayout(viz_layout)
         layout.addWidget(viz_group)
         
@@ -77,23 +82,37 @@ class CryoMambaWidget(QWidget):
                 
     def load_mrc_file(self, file_path):
         """Load an .mrc file and display it in napari."""
-        with mrcfile.open(file_path) as mrc:
-            data = mrc.data.copy()
+        try:
+            with mrcfile.open(file_path) as mrc:
+                data = mrc.data.copy()
+                
+            # Validate data
+            if data.size == 0:
+                raise ValueError("MRC file contains no data")
+                
+            # Display volume metadata
+            metadata = self.get_volume_metadata(file_path, data)
+            self.display_metadata(metadata)
             
-        # Display volume metadata
-        metadata = self.get_volume_metadata(file_path, data)
-        self.display_metadata(metadata)
-        
-        # Add to napari viewer
-        self.viewer.add_image(
-            data, 
-            name=Path(file_path).stem,
-            colormap='gray',
-            opacity=0.8
-        )
-        
-        self.current_volume = data
-        self.toggle_3d_button.setEnabled(True)
+            # Add to napari viewer
+            self.viewer.add_image(
+                data, 
+                name=Path(file_path).stem,
+                colormap='gray',
+                opacity=0.8
+            )
+            
+            self.current_volume = data
+            self.toggle_3d_button.setEnabled(True)
+            self.clear_button.setEnabled(True)
+            
+        except Exception as e:
+            error_msg = f"Failed to load MRC file: {str(e)}"
+            self.info_text.setText(error_msg)
+            self.current_volume = None
+            self.toggle_3d_button.setEnabled(False)
+            self.clear_button.setEnabled(False)
+            raise
         
     def get_volume_metadata(self, file_path, data):
         """Extract volume metadata."""
@@ -127,9 +146,21 @@ Std Dev: {metadata['std_intensity']:.2f}"""
         
         self.info_text.setText(info_text)
         
+    def clear_volume(self):
+        """Clear the current volume and reset UI state."""
+        if self.current_volume is not None:
+            # Clear all layers from viewer
+            self.viewer.layers.clear()
+            
+            # Reset UI state
+            self.current_volume = None
+            self.toggle_3d_button.setEnabled(False)
+            self.clear_button.setEnabled(False)
+            self.info_text.clear()
+            
     def toggle_3d_view(self):
         """Toggle between 2D and 3D visualization."""
-        if self.current_volume is not None:
+        if self.current_volume is not None and len(self.viewer.layers) > 0:
             # Get the current layer
             layer = self.viewer.layers[-1]
             
@@ -137,8 +168,11 @@ Std Dev: {metadata['std_intensity']:.2f}"""
             if hasattr(layer, 'rendering'):
                 if layer.rendering == 'mip':
                     layer.rendering = 'iso'
+                    self.toggle_3d_button.setText("Switch to 2D")
                 else:
                     layer.rendering = 'mip'
+                    self.toggle_3d_button.setText("Switch to 3D")
             else:
                 # For napari versions without rendering attribute
                 layer.rendering = 'mip'
+                self.toggle_3d_button.setText("Switch to 3D")
