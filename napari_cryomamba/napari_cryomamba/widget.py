@@ -2,12 +2,15 @@
 Main CryoMamba widget for napari integration.
 """
 
-from qtpy.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QLabel, QFileDialog, QTextEdit, QGroupBox
-from qtpy.QtCore import Qt, Signal
+from qtpy.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QLabel, QFileDialog, QTextEdit, QGroupBox, QLineEdit, QSpinBox
+from qtpy.QtCore import Qt, Signal, QThread
 import napari
 import mrcfile
 import numpy as np
 from pathlib import Path
+import asyncio
+import json
+from .websocket_client import WebSocketClient, WebSocketWorker, PreviewDataProcessor
 
 
 class CryoMambaWidget(QWidget):
@@ -17,7 +20,26 @@ class CryoMambaWidget(QWidget):
         super().__init__()
         self.viewer = napari_viewer
         self.current_volume = None
+        self.current_job_id = None
+        
+        # WebSocket components
+        self.websocket_client = WebSocketClient()
+        self.websocket_worker = WebSocketWorker(self.websocket_client)
+        self.setup_websocket_connections()
+        
         self.setup_ui()
+    
+    def setup_websocket_connections(self):
+        """Set up WebSocket signal connections."""
+        self.websocket_client.connected.connect(self.on_websocket_connected)
+        self.websocket_client.disconnected.connect(self.on_websocket_disconnected)
+        self.websocket_client.preview_received.connect(self.on_preview_received)
+        self.websocket_client.progress_received.connect(self.on_progress_received)
+        self.websocket_client.error_received.connect(self.on_error_received)
+        self.websocket_client.job_completed.connect(self.on_job_completed)
+        
+        # Start WebSocket worker thread
+        self.websocket_worker.start()
         
     def setup_ui(self):
         """Set up the user interface."""
@@ -33,6 +55,52 @@ class CryoMambaWidget(QWidget):
         
         file_group.setLayout(file_layout)
         layout.addWidget(file_group)
+        
+        # Job control group
+        job_group = QGroupBox("Job Control")
+        job_layout = QVBoxLayout()
+        
+        # Server URL input
+        server_layout = QHBoxLayout()
+        server_layout.addWidget(QLabel("Server:"))
+        self.server_url_input = QLineEdit("ws://localhost:8000")
+        server_layout.addWidget(self.server_url_input)
+        job_layout.addLayout(server_layout)
+        
+        # Job ID input
+        job_id_layout = QHBoxLayout()
+        job_id_layout.addWidget(QLabel("Job ID:"))
+        self.job_id_input = QLineEdit()
+        self.job_id_input.setPlaceholderText("Enter job ID to connect")
+        job_id_layout.addWidget(self.job_id_input)
+        job_layout.addLayout(job_id_layout)
+        
+        # Job control buttons
+        button_layout = QHBoxLayout()
+        
+        self.create_job_button = QPushButton("Create Job")
+        self.create_job_button.clicked.connect(self.create_job)
+        button_layout.addWidget(self.create_job_button)
+        
+        self.connect_button = QPushButton("Connect to Job")
+        self.connect_button.clicked.connect(self.connect_to_job)
+        self.connect_button.setEnabled(False)
+        button_layout.addWidget(self.connect_button)
+        
+        self.disconnect_button = QPushButton("Disconnect")
+        self.disconnect_button.clicked.connect(self.disconnect_from_job)
+        self.disconnect_button.setEnabled(False)
+        button_layout.addWidget(self.disconnect_button)
+        
+        job_layout.addLayout(button_layout)
+        
+        # Connection status
+        self.connection_status = QLabel("Disconnected")
+        self.connection_status.setStyleSheet("color: red;")
+        job_layout.addWidget(self.connection_status)
+        
+        job_group.setLayout(job_layout)
+        layout.addWidget(job_group)
         
         # Volume info group
         info_group = QGroupBox("Volume Information")
@@ -176,3 +244,123 @@ Std Dev: {metadata['std_intensity']:.2f}"""
                 # For napari versions without rendering attribute
                 layer.rendering = 'mip'
                 self.toggle_3d_button.setText("Switch to 3D")
+    
+    # WebSocket event handlers
+    def on_websocket_connected(self, job_id: str):
+        """Handle WebSocket connection."""
+        self.connection_status.setText(f"Connected to job {job_id}")
+        self.connection_status.setStyleSheet("color: green;")
+        self.connect_button.setEnabled(False)
+        self.disconnect_button.setEnabled(True)
+        self.info_text.append(f"Connected to job {job_id}")
+    
+    def on_websocket_disconnected(self, job_id: str):
+        """Handle WebSocket disconnection."""
+        self.connection_status.setText("Disconnected")
+        self.connection_status.setStyleSheet("color: red;")
+        self.connect_button.setEnabled(True)
+        self.disconnect_button.setEnabled(False)
+        self.info_text.append(f"Disconnected from job {job_id}")
+    
+    def on_preview_received(self, job_id: str, preview_data: dict):
+        """Handle preview data received from WebSocket."""
+        try:
+            # Decode preview data
+            preview_array = PreviewDataProcessor.decode_preview_data(preview_data)
+            
+            # Add preview as labels layer
+            layer_name = f"Preview_{job_id}"
+            
+            # Remove existing preview layer if it exists
+            for layer in self.viewer.layers:
+                if layer.name == layer_name:
+                    self.viewer.layers.remove(layer)
+                    break
+            
+            # Add new preview layer
+            self.viewer.add_labels(
+                preview_array,
+                name=layer_name,
+                opacity=0.7
+            )
+            
+            self.info_text.append(f"Received preview data: {preview_array.shape}")
+            
+        except Exception as e:
+            self.info_text.append(f"Error processing preview: {str(e)}")
+    
+    def on_progress_received(self, job_id: str, progress_data: dict):
+        """Handle progress updates."""
+        progress_msg = progress_data.get("message", "Progress update")
+        self.info_text.append(f"Progress: {progress_msg}")
+    
+    def on_error_received(self, job_id: str, error_data: dict):
+        """Handle error messages."""
+        error_msg = error_data.get("message", "Unknown error")
+        self.info_text.append(f"Error: {error_msg}")
+    
+    def on_job_completed(self, job_id: str, completion_data: dict):
+        """Handle job completion."""
+        self.info_text.append(f"Job {job_id} completed")
+        self.disconnect_from_job()
+    
+    # Job control methods
+    def create_job(self):
+        """Create a new job on the server."""
+        import requests
+        
+        try:
+            # Extract server URL from WebSocket URL
+            server_url = self.server_url_input.text().replace("ws://", "http://").replace("wss://", "https://")
+            
+            response = requests.post(f"{server_url}/v1/jobs")
+            response.raise_for_status()
+            
+            job_data = response.json()
+            job_id = job_data.get("job_id")
+            
+            if job_id:
+                self.job_id_input.setText(job_id)
+                self.connect_button.setEnabled(True)
+                self.info_text.append(f"Created job: {job_id}")
+            else:
+                self.info_text.append("Failed to create job: No job ID returned")
+                
+        except Exception as e:
+            self.info_text.append(f"Error creating job: {str(e)}")
+    
+    def connect_to_job(self):
+        """Connect to a job via WebSocket."""
+        job_id = self.job_id_input.text().strip()
+        if not job_id:
+            self.info_text.append("Please enter a job ID")
+            return
+        
+        self.current_job_id = job_id
+        
+        # Update WebSocket client URL
+        self.websocket_client.server_url = self.server_url_input.text()
+        
+        # Connect to job (this will run in the worker thread)
+        asyncio.run_coroutine_threadsafe(
+            self.websocket_client.connect_to_job(job_id),
+            self.websocket_worker.loop
+        )
+    
+    def disconnect_from_job(self):
+        """Disconnect from current job."""
+        if self.current_job_id:
+            asyncio.run_coroutine_threadsafe(
+                self.websocket_client.disconnect(),
+                self.websocket_worker.loop
+            )
+            self.current_job_id = None
+    
+    def closeEvent(self, event):
+        """Handle widget close event."""
+        # Clean up WebSocket connections
+        if self.websocket_worker.isRunning():
+            self.websocket_worker.stop()
+            self.websocket_worker.wait()
+        
+        event.accept()

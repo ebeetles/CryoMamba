@@ -30,11 +30,12 @@ app.add_middleware(
 add_error_handling_middleware(app)
 
 # Include routers
-from app.routes import health, info, jobs
+from app.routes import health, info, jobs, websocket
 
 app.include_router(health.router, prefix="/v1")
 app.include_router(info.router, prefix="/v1")
 app.include_router(jobs.router, prefix="/v1")
+app.include_router(websocket.router)
 
 @app.get("/")
 async def root():
