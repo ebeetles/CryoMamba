@@ -1,0 +1,61 @@
+[build-system]
+requires = ["setuptools>=45", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "napari-cryomamba"
+description = "CryoMamba napari plugin for cryo-EM volume visualization and analysis"
+readme = "README.md"
+requires-python = ">=3.8"
+license = "MIT"
+authors = [
+    {name = "CryoMamba Team", email = "team@cryomamba.com"},
+]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Science/Research",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.8",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Topic :: Scientific/Engineering :: Visualization",
+]
+version = "0.1.0"
+
+dependencies = [
+    "napari[all]>=0.4.0",
+    "mrcfile>=1.4.0",
+    "numpy>=1.20.0",
+    "qtpy>=2.0.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=6.0",
+    "pytest-qt>=4.0",
+    "black>=21.0",
+    "flake8>=3.8",
+    "isort>=5.0",
+]
+
+[project.urls]
+Homepage = "https://github.com/cryomamba/napari-cryomamba"
+Repository = "https://github.com/cryomamba/napari-cryomamba.git"
+Documentation = "https://github.com/cryomamba/napari-cryomamba#readme"
+"Bug Tracker" = "https://github.com/cryomamba/napari-cryomamba/issues"
+
+[tool.black]
+line-length = 88
+target-version = ['py38']
+
+[tool.isort]
+profile = "black"
+line_length = 88
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
+addopts = "-v --tb=short"

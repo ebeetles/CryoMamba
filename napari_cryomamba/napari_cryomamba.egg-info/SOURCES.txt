@@ -1,0 +1,10 @@
+README.md
+pyproject.toml
+napari_cryomamba/__init__.py
+napari_cryomamba/widget.py
+napari_cryomamba.egg-info/PKG-INFO
+napari_cryomamba.egg-info/SOURCES.txt
+napari_cryomamba.egg-info/dependency_links.txt
+napari_cryomamba.egg-info/requires.txt
+napari_cryomamba.egg-info/top_level.txt
+tests/test_widget.py

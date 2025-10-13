@@ -1,0 +1,119 @@
+Metadata-Version: 2.4
+Name: napari-cryomamba
+Version: 0.1.0
+Summary: CryoMamba napari plugin for cryo-EM volume visualization and analysis
+Author-email: CryoMamba Team <team@cryomamba.com>
+License-Expression: MIT
+Project-URL: Homepage, https://github.com/cryomamba/napari-cryomamba
+Project-URL: Repository, https://github.com/cryomamba/napari-cryomamba.git
+Project-URL: Documentation, https://github.com/cryomamba/napari-cryomamba#readme
+Project-URL: Bug Tracker, https://github.com/cryomamba/napari-cryomamba/issues
+Classifier: Development Status :: 3 - Alpha
+Classifier: Intended Audience :: Science/Research
+Classifier: Programming Language :: Python :: 3
+Classifier: Programming Language :: Python :: 3.8
+Classifier: Programming Language :: Python :: 3.9
+Classifier: Programming Language :: Python :: 3.10
+Classifier: Programming Language :: Python :: 3.11
+Classifier: Topic :: Scientific/Engineering :: Visualization
+Requires-Python: >=3.8
+Description-Content-Type: text/markdown
+Requires-Dist: napari[all]>=0.4.0
+Requires-Dist: mrcfile>=1.4.0
+Requires-Dist: numpy>=1.20.0
+Requires-Dist: qtpy>=2.0.0
+Provides-Extra: dev
+Requires-Dist: pytest>=6.0; extra == "dev"
+Requires-Dist: pytest-qt>=4.0; extra == "dev"
+Requires-Dist: black>=21.0; extra == "dev"
+Requires-Dist: flake8>=3.8; extra == "dev"
+Requires-Dist: isort>=5.0; extra == "dev"
+
+# CryoMamba Desktop Application
+
+A napari-based desktop application for cryo-EM volume visualization and analysis.
+
+## Features
+
+- Load and visualize .mrc files
+- Display volume metadata
+- Toggle between 2D and 3D visualization
+- Qt-based user interface
+- macOS compatible
+
+## Installation
+
+### Development Installation
+
+1. Clone the repository:
+```bash
+git clone <repository-url>
+cd CryoMamba
+```
+
+2. Install the napari plugin in development mode:
+```bash
+cd napari_cryomamba
+pip install -e .
+```
+
+3. Install additional dependencies:
+```bash
+pip install -r requirements.txt
+```
+
+## Usage
+
+### Running the Application
+
+```bash
+python napari_cryomamba/main.py
+```
+
+### Using as a napari Plugin
+
+1. Install napari:
+```bash
+pip install napari[all]
+```
+
+2. Install the CryoMamba plugin:
+```bash
+pip install -e .
+```
+
+3. Launch napari:
+```bash
+napari
+```
+
+4. The CryoMamba widget will be available in the Plugins menu.
+
+### Loading .mrc Files
+
+1. Click "Open .mrc File" button
+2. Select your .mrc file
+3. The volume will be loaded and displayed
+4. Use "Toggle 3D View" to switch between 2D and 3D visualization
+
+## Development
+
+### Running Tests
+
+```bash
+pytest
+```
+
+### Code Formatting
+
+```bash
+black napari_cryomamba/
+isort napari_cryomamba/
+```
+
+## Requirements
+
+- Python 3.8+
+- macOS (for desktop application)
+- napari 0.4.0+
+- mrcfile 1.4.0+
