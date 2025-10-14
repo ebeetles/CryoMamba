@@ -5,13 +5,14 @@ services:
     build: .
     ports:
       - "8000:8000"
+    volumes:
+      # Mount source code for development
+      - ./app:/app/app
+      - ./requirements.txt:/app/requirements.txt
     environment:
       - DEBUG=true
-      - LOG_LEVEL=INFO
-      - CORS_ORIGINS=["http://localhost:3000", "http://localhost:8080"]
-    volumes:
-      - ./app:/app/app
-      - ./logs:/app/logs
+      - LOG_LEVEL=DEBUG
+      - CORS_ORIGINS=["http://localhost:3000", "http://localhost:8080", "http://localhost:5173"]
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/v1/healthz"]
@@ -19,3 +20,9 @@ services:
       timeout: 10s
       retries: 3
       start_period: 40s
+    networks:
+      - cryomamba-network
+
+networks:
+  cryomamba-network:
+    driver: bridge
