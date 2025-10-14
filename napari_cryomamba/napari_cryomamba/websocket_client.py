@@ -9,7 +9,7 @@ from typing import Optional, Callable, Dict, Any
 from datetime import datetime
 import websockets
 import numpy as np
-from qtpy.QtCore import QObject, Signal, QThread, pyqtSignal
+from qtpy.QtCore import QObject, Signal, QThread
 from qtpy.QtWidgets import QApplication
 
 logger = logging.getLogger(__name__)

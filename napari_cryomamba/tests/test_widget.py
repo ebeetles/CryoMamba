@@ -32,6 +32,7 @@ class TestCryoMambaWidget:
         assert widget.open_button is not None
         assert widget.toggle_3d_button is not None
         assert not widget.toggle_3d_button.isEnabled()
+        assert widget.toggle_3d_button.text() == "Switch to 3D"
         
     def test_metadata_extraction(self):
         """Test volume metadata extraction."""
@@ -88,6 +89,29 @@ class TestCryoMambaWidget:
         assert '(10, 10, 10)' in info_text
         assert 'float32' in info_text
         assert '(1.0, 1.0, 1.0)' in info_text
+        
+    def test_2d_3d_toggle(self):
+        """Test 2D/3D view toggle functionality."""
+        mock_viewer = Mock()
+        mock_viewer.dims.ndisplay = 2  # Start in 2D mode
+        mock_viewer.layers = [Mock()]  # Mock layer
+        mock_layer = mock_viewer.layers[0]
+        mock_layer.rendering = 'translucent'
+        
+        widget = CryoMambaWidget(mock_viewer)
+        widget.current_volume = np.random.rand(10, 10, 10)  # Mock volume data
+        
+        # Test switching from 2D to 3D
+        widget.toggle_3d_view()
+        assert mock_viewer.dims.ndisplay == 3
+        assert mock_layer.rendering == 'mip'
+        assert widget.toggle_3d_button.text() == "Switch to 2D"
+        
+        # Test switching from 3D to 2D
+        widget.toggle_3d_view()
+        assert mock_viewer.dims.ndisplay == 2
+        assert mock_layer.rendering == 'translucent'
+        assert widget.toggle_3d_button.text() == "Switch to 3D"
 
 
 if __name__ == "__main__":

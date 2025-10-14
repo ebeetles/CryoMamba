@@ -118,7 +118,7 @@ class CryoMambaWidget(QWidget):
         viz_group = QGroupBox("Visualization Controls")
         viz_layout = QVBoxLayout()
         
-        self.toggle_3d_button = QPushButton("Toggle 3D View")
+        self.toggle_3d_button = QPushButton("Switch to 3D")
         self.toggle_3d_button.clicked.connect(self.toggle_3d_view)
         self.toggle_3d_button.setEnabled(False)
         viz_layout.addWidget(self.toggle_3d_button)
@@ -232,18 +232,21 @@ Std Dev: {metadata['std_intensity']:.2f}"""
             # Get the current layer
             layer = self.viewer.layers[-1]
             
-            # Toggle 3D rendering
-            if hasattr(layer, 'rendering'):
-                if layer.rendering == 'mip':
-                    layer.rendering = 'iso'
-                    self.toggle_3d_button.setText("Switch to 2D")
-                else:
-                    layer.rendering = 'mip'
-                    self.toggle_3d_button.setText("Switch to 3D")
+            # Check current view mode by looking at viewer dimensions
+            current_ndisplay = self.viewer.dims.ndisplay
+            
+            if current_ndisplay == 2:
+                # Switch to 3D view
+                self.viewer.dims.ndisplay = 3
+                layer.rendering = 'mip'  # Set 3D rendering mode
+                self.toggle_3d_button.setText("Switch to 2D")
+                self.info_text.append("Switched to 3D view")
             else:
-                # For napari versions without rendering attribute
-                layer.rendering = 'mip'
+                # Switch to 2D view
+                self.viewer.dims.ndisplay = 2
+                layer.rendering = 'translucent'  # Better for 2D
                 self.toggle_3d_button.setText("Switch to 3D")
+                self.info_text.append("Switched to 2D view")
     
     # WebSocket event handlers
     def on_websocket_connected(self, job_id: str):
