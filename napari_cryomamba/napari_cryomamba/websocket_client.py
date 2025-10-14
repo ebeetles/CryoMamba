@@ -34,6 +34,7 @@ class WebSocketClient(QObject):
         self.reconnect_attempts = 0
         self.max_reconnect_attempts = 5
         self.reconnect_delay = 1.0
+        self._listening_task: Optional[asyncio.Task] = None
         
     async def connect_to_job(self, job_id: str):
         """
@@ -54,22 +55,42 @@ class WebSocketClient(QObject):
         
         try:
             logger.info(f"Connecting to WebSocket: {websocket_url}")
-            self.websocket = await websockets.connect(websocket_url)
+            self.websocket = await websockets.connect(
+                websocket_url,
+                ping_interval=20,
+                ping_timeout=10,
+                close_timeout=10
+            )
             self.is_connected = True
             self.reconnect_attempts = 0
             
             # Emit connected signal
             self.connected.emit(job_id)
             
-            # Start listening for messages
-            await self._listen_for_messages()
+            # Start listening for messages in background
+            self._listening_task = asyncio.create_task(self._listen_for_messages())
             
+        except websockets.exceptions.InvalidURI:
+            logger.error(f"Invalid WebSocket URI: {websocket_url}")
+            self.error_received.emit(job_id, {"message": "Invalid server URL"})
+        except websockets.exceptions.ConnectionClosed:
+            logger.error(f"WebSocket connection closed during connect: {websocket_url}")
+            await self._handle_reconnect()
         except Exception as e:
             logger.error(f"Failed to connect to WebSocket: {e}")
+            self.error_received.emit(job_id, {"message": f"Connection failed: {str(e)}"})
             await self._handle_reconnect()
     
     async def disconnect(self):
         """Disconnect from WebSocket."""
+        # Cancel the listening task
+        if self._listening_task and not self._listening_task.done():
+            self._listening_task.cancel()
+            try:
+                await self._listening_task
+            except asyncio.CancelledError:
+                pass
+        
         if self.websocket:
             await self.websocket.close()
             self.websocket = None
@@ -83,14 +104,22 @@ class WebSocketClient(QObject):
     async def _listen_for_messages(self):
         """Listen for incoming WebSocket messages."""
         try:
-            async for message in self.websocket:
+            while self.is_connected and self.websocket:
                 try:
-                    data = json.loads(message)
-                    await self._handle_message(data)
-                except json.JSONDecodeError as e:
-                    logger.warning(f"Invalid JSON received: {e}")
+                    message = await self.websocket.recv()
+                    try:
+                        data = json.loads(message)
+                        await self._handle_message(data)
+                    except json.JSONDecodeError as e:
+                        logger.warning(f"Invalid JSON received: {e}")
+                    except Exception as e:
+                        logger.error(f"Error handling message: {e}")
+                except websockets.exceptions.ConnectionClosed:
+                    logger.info("WebSocket connection closed")
+                    break
                 except Exception as e:
-                    logger.error(f"Error handling message: {e}")
+                    logger.error(f"Error receiving message: {e}")
+                    break
                     
         except websockets.exceptions.ConnectionClosed:
             logger.info("WebSocket connection closed")
@@ -129,6 +158,9 @@ class WebSocketClient(QObject):
             logger.error("Max reconnection attempts reached")
             self.is_connected = False
             if self.job_id:
+                self.error_received.emit(self.job_id, {
+                    "message": f"Failed to reconnect after {self.max_reconnect_attempts} attempts"
+                })
                 self.disconnected.emit(self.job_id)
             return
         
@@ -136,6 +168,13 @@ class WebSocketClient(QObject):
         delay = self.reconnect_delay * (2 ** (self.reconnect_attempts - 1))
         
         logger.info(f"Attempting to reconnect in {delay} seconds (attempt {self.reconnect_attempts})")
+        
+        # Emit reconnection attempt signal
+        if self.job_id:
+            self.error_received.emit(self.job_id, {
+                "message": f"Reconnecting in {delay:.1f}s (attempt {self.reconnect_attempts}/{self.max_reconnect_attempts})"
+            })
+        
         await asyncio.sleep(delay)
         
         if self.job_id:
@@ -172,8 +211,14 @@ class WebSocketWorker(QThread):
             self.loop.close()
     
     def stop(self):
-        """Stop the event loop."""
+        """Stop the event loop and clean up WebSocket client."""
         if self.loop:
+            # Disconnect the WebSocket client before stopping the loop
+            if self.client.is_connected:
+                asyncio.run_coroutine_threadsafe(
+                    self.client.disconnect(),
+                    self.loop
+                )
             self.loop.call_soon_threadsafe(self.loop.stop)
     
     async def connect_to_job(self, job_id: str):
@@ -188,6 +233,21 @@ class WebSocketWorker(QThread):
 
 class PreviewDataProcessor:
     """Processes preview data for napari display."""
+    
+    @staticmethod
+    def encode_data(data: np.ndarray) -> str:
+        """
+        Encode numpy array data as base64 string.
+        
+        Args:
+            data: Numpy array to encode
+        
+        Returns:
+            Base64 encoded string
+        """
+        import base64
+        data_bytes = data.tobytes()
+        return base64.b64encode(data_bytes).decode('utf-8')
     
     @staticmethod
     def decode_preview_data(preview_data: dict) -> np.ndarray:

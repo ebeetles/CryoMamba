@@ -4,7 +4,16 @@ from datetime import datetime
 import logging
 import uuid
 import asyncio
+from typing import Optional, Dict, Any
+from pydantic import BaseModel
 from app.routes.websocket import broadcast_job_update, start_fake_preview_streaming
+
+class JobCreateRequest(BaseModel):
+    """Request model for creating a job."""
+    volume_shape: Optional[list] = None
+    volume_dtype: Optional[str] = None
+    has_volume: Optional[bool] = False
+    params: Optional[Dict[str, Any]] = None
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -13,9 +22,11 @@ router = APIRouter()
 jobs_db = {}
 # Track active preview streaming tasks
 preview_tasks = {}
+# Background task manager
+background_tasks = set()
 
 @router.post("/jobs")
-async def create_job():
+async def create_job(job_request: JobCreateRequest = None):
     """
     Create a new job
     Returns mock job_id for dummy implementation
@@ -23,10 +34,30 @@ async def create_job():
     job_id = str(uuid.uuid4())
     now = datetime.now()
     
+    # Extract volume parameters if provided
+    volume_shape = (64, 64, 64)  # Default test volume shape
+    if job_request and job_request.has_volume and job_request.volume_shape:
+        volume_shape = tuple(job_request.volume_shape)
+        logger.info(f"Using provided volume shape: {volume_shape}")
+    else:
+        logger.info(f"Using default volume shape: {volume_shape}")
+    
+    # Prepare job parameters
+    job_params = {"dummy": True}
+    if job_request:
+        if job_request.params:
+            job_params.update(job_request.params)
+        if job_request.has_volume:
+            job_params.update({
+                "volume_shape": job_request.volume_shape,
+                "volume_dtype": job_request.volume_dtype,
+                "has_volume": True
+            })
+    
     job_record = JobRecord(
         job_id=job_id,
         state=JobState.PENDING,
-        params={"dummy": True},
+        params=job_params,
         created_at=now,
         updated_at=now
     )
@@ -41,12 +72,14 @@ async def create_job():
     })
     
     # Start fake preview streaming for testing
-    # Using a default volume shape for testing
-    volume_shape = (64, 64, 64)  # Default test volume shape
     preview_task = asyncio.create_task(
         start_fake_preview_streaming(job_id, volume_shape, frequency=1.0)
     )
     preview_tasks[job_id] = preview_task
+    
+    # Add to background tasks to prevent garbage collection
+    background_tasks.add(preview_task)
+    preview_task.add_done_callback(background_tasks.discard)
     
     # Update job state to running
     job_record.state = JobState.RUNNING
@@ -55,15 +88,15 @@ async def create_job():
     await broadcast_job_update(job_id, "job_started", {
         "job_id": job_id,
         "state": job_record.state,
-        "message": "Job started with fake preview streaming"
+        "message": f"Job started with fake preview streaming for volume {volume_shape}"
     })
     
-    logger.info(f"Created dummy job: {job_id}")
+    logger.info(f"Created dummy job: {job_id} with volume shape: {volume_shape}")
     
     return {
         "job_id": job_id,
         "status": "created",
-        "message": "Dummy job created successfully with fake preview streaming"
+        "message": f"Dummy job created successfully with fake preview streaming for volume {volume_shape}"
     }
 
 @router.get("/jobs/{job_id}")

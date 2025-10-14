@@ -1,5 +1,5 @@
 from fastapi import APIRouter
-from datetime import datetime
+from datetime import datetime, timezone
 import logging
 import platform
 import sys
@@ -17,7 +17,7 @@ async def server_info():
     return {
         "service": "cryomamba-inference-server",
         "version": "1.0.0",
-        "timestamp": datetime.utcnow().isoformat(),
+        "timestamp": datetime.now(timezone.utc).isoformat(),
         "system": {
             "platform": platform.platform(),
             "python_version": sys.version,

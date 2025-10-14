@@ -10,6 +10,7 @@ import numpy as np
 from pathlib import Path
 import asyncio
 import json
+import requests
 from .websocket_client import WebSocketClient, WebSocketWorker, PreviewDataProcessor
 
 
@@ -65,6 +66,12 @@ class CryoMambaWidget(QWidget):
         server_layout.addWidget(QLabel("Server:"))
         self.server_url_input = QLineEdit("ws://localhost:8000")
         server_layout.addWidget(self.server_url_input)
+        
+        # Server status check button
+        self.check_server_button = QPushButton("Check Server")
+        self.check_server_button.clicked.connect(self.check_server_connection)
+        server_layout.addWidget(self.check_server_button)
+        
         job_layout.addLayout(server_layout)
         
         # Job ID input
@@ -91,6 +98,11 @@ class CryoMambaWidget(QWidget):
         self.disconnect_button.clicked.connect(self.disconnect_from_job)
         self.disconnect_button.setEnabled(False)
         button_layout.addWidget(self.disconnect_button)
+        
+        self.reconnect_button = QPushButton("Reconnect")
+        self.reconnect_button.clicked.connect(self.manual_reconnect)
+        self.reconnect_button.setEnabled(False)
+        button_layout.addWidget(self.reconnect_button)
         
         job_layout.addLayout(button_layout)
         
@@ -255,6 +267,7 @@ Std Dev: {metadata['std_intensity']:.2f}"""
         self.connection_status.setStyleSheet("color: green;")
         self.connect_button.setEnabled(False)
         self.disconnect_button.setEnabled(True)
+        self.reconnect_button.setEnabled(False)
         self.info_text.append(f"Connected to job {job_id}")
     
     def on_websocket_disconnected(self, job_id: str):
@@ -263,6 +276,7 @@ Std Dev: {metadata['std_intensity']:.2f}"""
         self.connection_status.setStyleSheet("color: red;")
         self.connect_button.setEnabled(True)
         self.disconnect_button.setEnabled(False)
+        self.reconnect_button.setEnabled(False)
         self.info_text.append(f"Disconnected from job {job_id}")
     
     def on_preview_received(self, job_id: str, preview_data: dict):
@@ -280,14 +294,22 @@ Std Dev: {metadata['std_intensity']:.2f}"""
                     self.viewer.layers.remove(layer)
                     break
             
-            # Add new preview layer
+            # Add new preview layer with better visibility
             self.viewer.add_labels(
                 preview_array,
                 name=layer_name,
-                opacity=0.7
+                opacity=0.8
             )
             
-            self.info_text.append(f"Received preview data: {preview_array.shape}")
+            # Update info with timestamp
+            from datetime import datetime
+            timestamp = datetime.now().strftime("%H:%M:%S")
+            self.info_text.append(f"[{timestamp}] Preview update: {preview_array.shape}")
+            
+            # Keep only last 10 messages to avoid UI clutter
+            lines = self.info_text.toPlainText().split('\n')
+            if len(lines) > 10:
+                self.info_text.setText('\n'.join(lines[-10:]))
             
         except Exception as e:
             self.info_text.append(f"Error processing preview: {str(e)}")
@@ -301,6 +323,21 @@ Std Dev: {metadata['std_intensity']:.2f}"""
         """Handle error messages."""
         error_msg = error_data.get("message", "Unknown error")
         self.info_text.append(f"Error: {error_msg}")
+        
+        # Handle specific error types
+        if "reconnect" in error_msg.lower():
+            # This is a reconnection message, don't treat as critical error
+            pass
+        elif "failed to reconnect" in error_msg.lower():
+            # Max reconnection attempts reached
+            self.connection_status.setText("Connection Failed")
+            self.connection_status.setStyleSheet("color: red;")
+            self.connect_button.setEnabled(True)
+            self.disconnect_button.setEnabled(False)
+            self.reconnect_button.setEnabled(True)
+        elif "invalid server url" in error_msg.lower():
+            self.info_text.append("Please check the server URL format (should start with ws:// or wss://)")
+            self.reconnect_button.setEnabled(True)
     
     def on_job_completed(self, job_id: str, completion_data: dict):
         """Handle job completion."""
@@ -308,15 +345,55 @@ Std Dev: {metadata['std_intensity']:.2f}"""
         self.disconnect_from_job()
     
     # Job control methods
+    def check_server_connection(self):
+        """Check server connection status."""
+        try:
+            server_url = self.server_url_input.text().replace("ws://", "http://").replace("wss://", "https://")
+            
+            # Check health endpoint
+            health_response = requests.get(f"{server_url}/v1/healthz", timeout=5)
+            health_response.raise_for_status()
+            
+            # Check server info endpoint
+            info_response = requests.get(f"{server_url}/v1/server/info", timeout=5)
+            info_response.raise_for_status()
+            
+            info_data = info_response.json()
+            self.info_text.append(f"Server connected: {info_data.get('service', 'Unknown')} v{info_data.get('version', 'Unknown')}")
+            
+        except requests.exceptions.ConnectionError:
+            self.info_text.append("Server connection failed: Cannot reach server")
+        except requests.exceptions.Timeout:
+            self.info_text.append("Server connection failed: Request timed out")
+        except requests.exceptions.HTTPError as e:
+            self.info_text.append(f"Server connection failed: HTTP {e.response.status_code}")
+        except Exception as e:
+            self.info_text.append(f"Server connection failed: {str(e)}")
+    
     def create_job(self):
         """Create a new job on the server."""
-        import requests
-        
         try:
             # Extract server URL from WebSocket URL
             server_url = self.server_url_input.text().replace("ws://", "http://").replace("wss://", "https://")
             
-            response = requests.post(f"{server_url}/v1/jobs")
+            # First check server health
+            health_response = requests.get(f"{server_url}/v1/healthz", timeout=5)
+            health_response.raise_for_status()
+            
+            # Create job with volume information if available
+            job_params = {}
+            if self.current_volume is not None:
+                job_params = {
+                    "volume_shape": list(self.current_volume.shape),
+                    "volume_dtype": str(self.current_volume.dtype),
+                    "has_volume": True
+                }
+                self.info_text.append(f"Creating job with volume: {self.current_volume.shape}")
+            else:
+                self.info_text.append("Creating job without volume (will use default test shape)")
+            
+            # Create job
+            response = requests.post(f"{server_url}/v1/jobs", json=job_params, timeout=10)
             response.raise_for_status()
             
             job_data = response.json()
@@ -329,6 +406,12 @@ Std Dev: {metadata['std_intensity']:.2f}"""
             else:
                 self.info_text.append("Failed to create job: No job ID returned")
                 
+        except requests.exceptions.ConnectionError:
+            self.info_text.append("Error: Cannot connect to server. Please check server URL and ensure server is running.")
+        except requests.exceptions.Timeout:
+            self.info_text.append("Error: Server request timed out. Server may be overloaded.")
+        except requests.exceptions.HTTPError as e:
+            self.info_text.append(f"Error: Server returned error {e.response.status_code}")
         except Exception as e:
             self.info_text.append(f"Error creating job: {str(e)}")
     
@@ -337,6 +420,24 @@ Std Dev: {metadata['std_intensity']:.2f}"""
         job_id = self.job_id_input.text().strip()
         if not job_id:
             self.info_text.append("Please enter a job ID")
+            return
+        
+        # First verify job exists on server
+        try:
+            server_url = self.server_url_input.text().replace("ws://", "http://").replace("wss://", "https://")
+            response = requests.get(f"{server_url}/v1/jobs/{job_id}", timeout=5)
+            response.raise_for_status()
+        except requests.exceptions.ConnectionError:
+            self.info_text.append("Error: Cannot connect to server. Please check server URL and ensure server is running.")
+            return
+        except requests.exceptions.HTTPError as e:
+            if e.response.status_code == 404:
+                self.info_text.append(f"Error: Job {job_id} not found on server.")
+            else:
+                self.info_text.append(f"Error: Server returned error {e.response.status_code}")
+            return
+        except Exception as e:
+            self.info_text.append(f"Error verifying job: {str(e)}")
             return
         
         self.current_job_id = job_id
@@ -358,6 +459,19 @@ Std Dev: {metadata['std_intensity']:.2f}"""
                 self.websocket_worker.loop
             )
             self.current_job_id = None
+    
+    def manual_reconnect(self):
+        """Manually reconnect to the current job."""
+        if self.current_job_id:
+            self.info_text.append("Attempting manual reconnection...")
+            # Reset reconnection attempts
+            self.websocket_client.reconnect_attempts = 0
+            
+            # Try to reconnect
+            asyncio.run_coroutine_threadsafe(
+                self.websocket_client.connect_to_job(self.current_job_id),
+                self.websocket_worker.loop
+            )
     
     def closeEvent(self, event):
         """Handle widget close event."""
