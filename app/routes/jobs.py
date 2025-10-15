@@ -7,6 +7,7 @@ import asyncio
 from typing import Optional, Dict, Any
 from pydantic import BaseModel
 from app.routes.websocket import broadcast_job_update, start_fake_preview_streaming
+import app.services.orchestrator as orchestrator_service
 
 class JobCreateRequest(BaseModel):
     """Request model for creating a job."""
@@ -56,13 +57,16 @@ async def create_job(job_request: JobCreateRequest = None):
     
     job_record = JobRecord(
         job_id=job_id,
-        state=JobState.PENDING,
+        state=JobState.QUEUED,
         params=job_params,
         created_at=now,
         updated_at=now
     )
     
     jobs_db[job_id] = job_record
+    # Submit to orchestrator queue
+    if orchestrator_service.orchestrator is not None:
+        await orchestrator_service.orchestrator.submit(job_record)
     
     # Broadcast job creation
     await broadcast_job_update(job_id, "job_created", {
@@ -71,27 +75,8 @@ async def create_job(job_request: JobCreateRequest = None):
         "message": "Job created successfully"
     })
     
-    # Start fake preview streaming for testing
-    preview_task = asyncio.create_task(
-        start_fake_preview_streaming(job_id, volume_shape, frequency=1.0)
-    )
-    preview_tasks[job_id] = preview_task
-    
-    # Add to background tasks to prevent garbage collection
-    background_tasks.add(preview_task)
-    preview_task.add_done_callback(background_tasks.discard)
-    
-    # Update job state to running
-    job_record.state = JobState.RUNNING
-    job_record.updated_at = datetime.now()
-    
-    await broadcast_job_update(job_id, "job_started", {
-        "job_id": job_id,
-        "state": job_record.state,
-        "message": f"Job started with fake preview streaming for volume {volume_shape}"
-    })
-    
-    logger.info(f"Created dummy job: {job_id} with volume shape: {volume_shape}")
+    # Preview streaming now handled by orchestrator during processing as needed
+    logger.info(f"Created job: {job_id} with volume shape: {volume_shape}")
     
     return {
         "job_id": job_id,
@@ -111,9 +96,11 @@ async def get_job(job_id: str):
     job = jobs_db[job_id]
     logger.info(f"Retrieved job: {job_id}")
     
+    # Map internal 'queued' state to externally expected 'pending'
+    external_state = "pending" if str(job.state) == "queued" else job.state
     return {
         "job_id": job.job_id,
-        "state": job.state,
+        "state": external_state,
         "params": job.params,
         "artifacts": job.artifacts,
         "errors": job.errors,
@@ -131,8 +118,11 @@ async def cancel_job(job_id: str):
         raise HTTPException(status_code=404, detail="Job not found")
     
     job = jobs_db[job_id]
-    job.state = JobState.CANCELLED
-    job.updated_at = datetime.now()
+    if orchestrator_service.orchestrator is not None:
+        await orchestrator_service.orchestrator.cancel(job_id)
+    else:
+        job.state = JobState.CANCELLED
+        job.updated_at = datetime.now()
     
     # Stop preview streaming if active
     if job_id in preview_tasks:
@@ -156,5 +146,30 @@ async def cancel_job(job_id: str):
     return {
         "job_id": job_id,
         "status": "cancelled",
-        "message": "Job cancellation not yet implemented"
+        "message": "Job cancelled"
     }
+
+
+@router.get("/jobs")
+async def list_jobs():
+    """List jobs with basic filtering in the future."""
+    res = []
+    if orchestrator_service.orchestrator is not None:
+        for job in orchestrator_service.orchestrator.list():
+            res.append({
+                "job_id": job.job_id,
+                "state": ("pending" if str(job.state) == "queued" else job.state),
+                "progress": job.progress,
+                "created_at": job.created_at.isoformat(),
+                "updated_at": job.updated_at.isoformat(),
+            })
+    else:
+        for job in jobs_db.values():
+            res.append({
+                "job_id": job.job_id,
+                "state": ("pending" if str(job.state) == "queued" else job.state),
+                "progress": job.progress,
+                "created_at": job.created_at.isoformat(),
+                "updated_at": job.updated_at.isoformat(),
+            })
+    return {"jobs": res}

@@ -241,22 +241,18 @@ Std Dev: {metadata['std_intensity']:.2f}"""
     def toggle_3d_view(self):
         """Toggle between 2D and 3D visualization."""
         if self.current_volume is not None and len(self.viewer.layers) > 0:
-            # Get the current layer
             layer = self.viewer.layers[-1]
-            
-            # Check current view mode by looking at viewer dimensions
-            current_ndisplay = self.viewer.dims.ndisplay
-            
+            current_ndisplay = getattr(self.viewer.dims, 'ndisplay', 2)
             if current_ndisplay == 2:
-                # Switch to 3D view
                 self.viewer.dims.ndisplay = 3
-                layer.rendering = 'mip'  # Set 3D rendering mode
+                if hasattr(layer, 'rendering'):
+                    layer.rendering = 'mip'
                 self.toggle_3d_button.setText("Switch to 2D")
                 self.info_text.append("Switched to 3D view")
             else:
-                # Switch to 2D view
                 self.viewer.dims.ndisplay = 2
-                layer.rendering = 'translucent'  # Better for 2D
+                if hasattr(layer, 'rendering'):
+                    layer.rendering = 'translucent'
                 self.toggle_3d_button.setText("Switch to 3D")
                 self.info_text.append("Switched to 2D view")
     

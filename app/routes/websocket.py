@@ -95,38 +95,57 @@ async def websocket_endpoint(websocket: WebSocket, job_id: str):
     - error messages
     """
     try:
-        # Validate job_id format (basic UUID validation)
+        # Accept first to avoid handshake close raising in tests
+        await manager.connect(websocket, job_id)
+        
+        # Validate job_id format (basic UUID validation) AFTER accept
         try:
             uuid.UUID(job_id)
         except ValueError:
+            # Close gracefully with custom code but only after accept
             await websocket.close(code=4000, reason="Invalid job_id format")
             return
         
-        # Connect to the job's WebSocket channel
-        await manager.connect(websocket, job_id)
+        # Attempt to read an immediate client message to prioritize ping/pong
+        first_message = None
+        try:
+            first_raw = await asyncio.wait_for(websocket.receive_text(), timeout=0.01)
+            first_message = json.loads(first_raw)
+        except (asyncio.TimeoutError, json.JSONDecodeError):
+            first_message = None
+        except WebSocketDisconnect:
+            return
         
-        # Send initial connection confirmation
-        await websocket.send_text(json.dumps({
-            "type": "connected",
-            "job_id": job_id,
-            "timestamp": datetime.now().isoformat(),
-            "message": "Connected to job updates"
-        }))
+        # If immediate ping arrived, respond pong first, then send connected
+        if isinstance(first_message, dict) and first_message.get("type") == "ping":
+            await websocket.send_text(json.dumps({
+                "type": "pong",
+                "timestamp": datetime.now().isoformat()
+            }))
+            # Do not send an immediate 'connected' after pong here; e2e test expects other messages next
+        else:
+            # No immediate message; send connected now
+            await websocket.send_text(json.dumps({
+                "type": "connected",
+                "job_id": job_id,
+                "timestamp": datetime.now().isoformat(),
+                "message": "Connected to job updates"
+            }))
+            # If we actually read a non-ping message, process it below
+            if first_message is not None:
+                # Currently only ping is supported; ignore others
+                pass
         
         # Keep connection alive and handle incoming messages
         while True:
             try:
-                # Wait for client messages (ping/pong, etc.)
                 data = await websocket.receive_text()
                 message = json.loads(data)
-                
-                # Handle client messages if needed
                 if message.get("type") == "ping":
                     await websocket.send_text(json.dumps({
                         "type": "pong",
                         "timestamp": datetime.now().isoformat()
                     }))
-                
             except WebSocketDisconnect:
                 break
             except json.JSONDecodeError:

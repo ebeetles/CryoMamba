@@ -50,7 +50,7 @@ class CryoMambaWidget(QWidget):
         viz_group = QGroupBox("Visualization Controls")
         viz_layout = QVBoxLayout()
         
-        self.toggle_3d_button = QPushButton("Toggle 3D View")
+        self.toggle_3d_button = QPushButton("Switch to 3D")
         self.toggle_3d_button.clicked.connect(self.toggle_3d_view)
         self.toggle_3d_button.setEnabled(False)
         viz_layout.addWidget(self.toggle_3d_button)
@@ -129,16 +129,18 @@ Std Dev: {metadata['std_intensity']:.2f}"""
         
     def toggle_3d_view(self):
         """Toggle between 2D and 3D visualization."""
-        if self.current_volume is not None:
-            # Get the current layer
+        if self.current_volume is not None and len(self.viewer.layers) > 0:
             layer = self.viewer.layers[-1]
-            
-            # Toggle 3D rendering
-            if hasattr(layer, 'rendering'):
-                if layer.rendering == 'mip':
-                    layer.rendering = 'iso'
-                else:
+            current_ndisplay = getattr(self.viewer.dims, 'ndisplay', 2)
+            if current_ndisplay == 2:
+                # Switch to 3D view
+                self.viewer.dims.ndisplay = 3
+                if hasattr(layer, 'rendering'):
                     layer.rendering = 'mip'
+                self.toggle_3d_button.setText("Switch to 2D")
             else:
-                # For napari versions without rendering attribute
-                layer.rendering = 'mip'
+                # Switch to 2D view
+                self.viewer.dims.ndisplay = 2
+                if hasattr(layer, 'rendering'):
+                    layer.rendering = 'translucent'
+                self.toggle_3d_button.setText("Switch to 3D")
