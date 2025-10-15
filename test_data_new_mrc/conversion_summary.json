@@ -1,0 +1,31 @@
+{
+  "conversion_date": "2025-10-14 23:40:45",
+  "source_directory": "/Users/elwinli/CryoMamba/test_data_new",
+  "output_directory": "/Users/elwinli/CryoMamba/test_data_new_mrc",
+  "files_converted": {
+    "images": 3,
+    "labels": 3,
+    "predictions": 7
+  },
+  "converted_files": {
+    "images": [
+      "/Users/elwinli/CryoMamba/test_data_new_mrc/images/tomo_16_0000.mrc",
+      "/Users/elwinli/CryoMamba/test_data_new_mrc/images/tomo_26_0000.mrc",
+      "/Users/elwinli/CryoMamba/test_data_new_mrc/images/tomo_8_0000.mrc"
+    ],
+    "labels": [
+      "/Users/elwinli/CryoMamba/test_data_new_mrc/labels/tomo_26.mrc",
+      "/Users/elwinli/CryoMamba/test_data_new_mrc/labels/tomo_16.mrc",
+      "/Users/elwinli/CryoMamba/test_data_new_mrc/labels/tomo_8.mrc"
+    ],
+    "predictions": [
+      "/Users/elwinli/CryoMamba/test_data_new_mrc/predictions/tomo_16_0000.nii_prediction.mrc",
+      "/Users/elwinli/CryoMamba/test_data_new_mrc/predictions/tomo_26.nii_prediction.mrc",
+      "/Users/elwinli/CryoMamba/test_data_new_mrc/predictions/tomo_26_0000.nii_prediction.mrc",
+      "/Users/elwinli/CryoMamba/test_data_new_mrc/predictions/tomo_16.nii_prediction.mrc",
+      "/Users/elwinli/CryoMamba/test_data_new_mrc/predictions/temp_input.nii_prediction.mrc",
+      "/Users/elwinli/CryoMamba/test_data_new_mrc/predictions/tomo_8.nii_prediction.mrc",
+      "/Users/elwinli/CryoMamba/test_data_new_mrc/predictions/tomo_8_0000.nii_prediction.mrc"
+    ]
+  }
+}

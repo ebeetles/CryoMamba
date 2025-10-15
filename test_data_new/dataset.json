@@ -1,0 +1,173 @@
+{
+    "labels": {
+        "background": 0,
+        "label": 1
+    },
+    "channel_names": {
+        "0": "CT"
+    },
+    "numTraining": 40,
+    "file_ending": ".nii.gz",
+    "training": [
+        {
+            "image": "./imagesTr/tomo_0_0000.nii.gz",
+            "label": "./labelsTr/tomo_0.nii.gz"
+        },
+        {
+            "image": "./imagesTr/tomo_1_0000.nii.gz",
+            "label": "./labelsTr/tomo_1.nii.gz"
+        },
+        {
+            "image": "./imagesTr/tomo_2_0000.nii.gz",
+            "label": "./labelsTr/tomo_2.nii.gz"
+        },
+        {
+            "image": "./imagesTr/tomo_3_0000.nii.gz",
+            "label": "./labelsTr/tomo_3.nii.gz"
+        },
+        {
+            "image": "./imagesTr/tomo_4_0000.nii.gz",
+            "label": "./labelsTr/tomo_4.nii.gz"
+        },
+        {
+            "image": "./imagesTr/tomo_5_0000.nii.gz",
+            "label": "./labelsTr/tomo_5.nii.gz"
+        },
+        {
+            "image": "./imagesTr/tomo_6_0000.nii.gz",
+            "label": "./labelsTr/tomo_6.nii.gz"
+        },
+        {
+            "image": "./imagesTr/tomo_7_0000.nii.gz",
+            "label": "./labelsTr/tomo_7.nii.gz"
+        },
+        {
+            "image": "./imagesTr/tomo_8_0000.nii.gz",
+            "label": "./labelsTr/tomo_8.nii.gz"
+        },
+        {
+            "image": "./imagesTr/tomo_9_0000.nii.gz",
+            "label": "./labelsTr/tomo_9.nii.gz"
+        },
+        {
+            "image": "./imagesTr/tomo_10_0000.nii.gz",
+            "label": "./labelsTr/tomo_10.nii.gz"
+        },
+        {
+            "image": "./imagesTr/tomo_11_0000.nii.gz",
+            "label": "./labelsTr/tomo_11.nii.gz"
+        },
+        {
+            "image": "./imagesTr/tomo_12_0000.nii.gz",
+            "label": "./labelsTr/tomo_12.nii.gz"
+        },
+        {
+            "image": "./imagesTr/tomo_13_0000.nii.gz",
+            "label": "./labelsTr/tomo_13.nii.gz"
+        },
+        {
+            "image": "./imagesTr/tomo_14_0000.nii.gz",
+            "label": "./labelsTr/tomo_14.nii.gz"
+        },
+        {
+            "image": "./imagesTr/tomo_15_0000.nii.gz",
+            "label": "./labelsTr/tomo_15.nii.gz"
+        },
+        {
+            "image": "./imagesTr/tomo_16_0000.nii.gz",
+            "label": "./labelsTr/tomo_16.nii.gz"
+        },
+        {
+            "image": "./imagesTr/tomo_17_0000.nii.gz",
+            "label": "./labelsTr/tomo_17.nii.gz"
+        },
+        {
+            "image": "./imagesTr/tomo_18_0000.nii.gz",
+            "label": "./labelsTr/tomo_18.nii.gz"
+        },
+        {
+            "image": "./imagesTr/tomo_19_0000.nii.gz",
+            "label": "./labelsTr/tomo_19.nii.gz"
+        },
+        {
+            "image": "./imagesTr/tomo_20_0000.nii.gz",
+            "label": "./labelsTr/tomo_20.nii.gz"
+        },
+        {
+            "image": "./imagesTr/tomo_21_0000.nii.gz",
+            "label": "./labelsTr/tomo_21.nii.gz"
+        },
+        {
+            "image": "./imagesTr/tomo_22_0000.nii.gz",
+            "label": "./labelsTr/tomo_22.nii.gz"
+        },
+        {
+            "image": "./imagesTr/tomo_23_0000.nii.gz",
+            "label": "./labelsTr/tomo_23.nii.gz"
+        },
+        {
+            "image": "./imagesTr/tomo_24_0000.nii.gz",
+            "label": "./labelsTr/tomo_24.nii.gz"
+        },
+        {
+            "image": "./imagesTr/tomo_25_0000.nii.gz",
+            "label": "./labelsTr/tomo_25.nii.gz"
+        },
+        {
+            "image": "./imagesTr/tomo_26_0000.nii.gz",
+            "label": "./labelsTr/tomo_26.nii.gz"
+        },
+        {
+            "image": "./imagesTr/tomo_27_0000.nii.gz",
+            "label": "./labelsTr/tomo_27.nii.gz"
+        },
+        {
+            "image": "./imagesTr/tomo_28_0000.nii.gz",
+            "label": "./labelsTr/tomo_28.nii.gz"
+        },
+        {
+            "image": "./imagesTr/tomo_29_0000.nii.gz",
+            "label": "./labelsTr/tomo_29.nii.gz"
+        },
+        {
+            "image": "./imagesTr/tomo_30_0000.nii.gz",
+            "label": "./labelsTr/tomo_30.nii.gz"
+        },
+        {
+            "image": "./imagesTr/tomo_31_0000.nii.gz",
+            "label": "./labelsTr/tomo_31.nii.gz"
+        },
+        {
+            "image": "./imagesTr/tomo_32_0000.nii.gz",
+            "label": "./labelsTr/tomo_32.nii.gz"
+        },
+        {
+            "image": "./imagesTr/tomo_33_0000.nii.gz",
+            "label": "./labelsTr/tomo_33.nii.gz"
+        },
+        {
+            "image": "./imagesTr/tomo_34_0000.nii.gz",
+            "label": "./labelsTr/tomo_34.nii.gz"
+        },
+        {
+            "image": "./imagesTr/tomo_35_0000.nii.gz",
+            "label": "./labelsTr/tomo_35.nii.gz"
+        },
+        {
+            "image": "./imagesTr/tomo_36_0000.nii.gz",
+            "label": "./labelsTr/tomo_36.nii.gz"
+        },
+        {
+            "image": "./imagesTr/tomo_37_0000.nii.gz",
+            "label": "./labelsTr/tomo_37.nii.gz"
+        },
+        {
+            "image": "./imagesTr/tomo_38_0000.nii.gz",
+            "label": "./labelsTr/tomo_38.nii.gz"
+        },
+        {
+            "image": "./imagesTr/tomo_39_0000.nii.gz",
+            "label": "./labelsTr/tomo_39.nii.gz"
+        }
+    ]
+}
