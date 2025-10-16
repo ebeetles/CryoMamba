@@ -238,9 +238,28 @@ class InMemoryOrchestrator:
                     # Ensure float32 and (Z,Y,X)
                     volume = np.asarray(data, dtype=np.float32)
                 else:
-                    # Fallback small volume to keep CPU tests fast
-                    volume_shape = tuple(params.get("volume_shape", (16, 16, 16)))
-                    volume = np.zeros(volume_shape, dtype=np.float32)
+                    # Try to load uploaded MRC file
+                    upload_id = params.get("upload_id")
+                    if upload_id:
+                        # Load the uploaded MRC file - it's saved with the original filename
+                        upload_dir = Path(settings.upload_base_dir) / upload_id
+                        mrc_files = list(upload_dir.glob("*.mrc"))
+                        if mrc_files:
+                            mrc_path = mrc_files[0]  # Take the first .mrc file found
+                            import mrcfile
+                            with mrcfile.open(str(mrc_path)) as mrc:
+                                data = mrc.data.copy()
+                            volume = np.asarray(data, dtype=np.float32)
+                            logger.info(f"Loaded uploaded MRC file: {mrc_path}")
+                        else:
+                            logger.warning(f"No MRC file found in upload directory: {upload_dir}")
+                            # Fallback to small test volume
+                            volume_shape = tuple(params.get("volume_shape", (16, 16, 16)))
+                            volume = np.zeros(volume_shape, dtype=np.float32)
+                    else:
+                        # Fallback small volume to keep CPU tests fast
+                        volume_shape = tuple(params.get("volume_shape", (16, 16, 16)))
+                        volume = np.zeros(volume_shape, dtype=np.float32)
 
                 wrapper = NnUNetWrapper(
                     model_dir=settings.nnunet_model_dir or "",
