@@ -2,7 +2,7 @@
 Main CryoMamba widget for napari integration.
 """
 
-from qtpy.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QLabel, QFileDialog, QTextEdit, QGroupBox, QLineEdit, QSpinBox
+from qtpy.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QLabel, QFileDialog, QTextEdit, QGroupBox, QLineEdit, QSpinBox, QCheckBox, QProgressBar
 from qtpy.QtCore import Qt, Signal, QThread
 import napari
 import mrcfile
@@ -11,6 +11,7 @@ from pathlib import Path
 import asyncio
 import json
 import requests
+import os
 from .websocket_client import WebSocketClient, WebSocketWorker, PreviewDataProcessor
 
 
@@ -21,7 +22,10 @@ class CryoMambaWidget(QWidget):
         super().__init__()
         self.viewer = napari_viewer
         self.current_volume = None
+        self.current_volume_path = None
         self.current_job_id = None
+        self.current_upload_id = None
+        self.is_inference_running = False
         
         # WebSocket components
         self.websocket_client = WebSocketClient()
@@ -57,62 +61,93 @@ class CryoMambaWidget(QWidget):
         file_group.setLayout(file_layout)
         layout.addWidget(file_group)
         
-        # Job control group
-        job_group = QGroupBox("Job Control")
-        job_layout = QVBoxLayout()
+        # Server configuration group
+        server_group = QGroupBox("Server Configuration")
+        server_layout = QVBoxLayout()
         
         # Server URL input
-        server_layout = QHBoxLayout()
-        server_layout.addWidget(QLabel("Server:"))
-        self.server_url_input = QLineEdit("ws://localhost:8000")
-        server_layout.addWidget(self.server_url_input)
+        server_url_layout = QHBoxLayout()
+        server_url_layout.addWidget(QLabel("Server:"))
+        self.server_url_input = QLineEdit("http://localhost:8000")
+        server_url_layout.addWidget(self.server_url_input)
         
         # Server status check button
         self.check_server_button = QPushButton("Check Server")
         self.check_server_button.clicked.connect(self.check_server_connection)
-        server_layout.addWidget(self.check_server_button)
+        server_url_layout.addWidget(self.check_server_button)
         
-        job_layout.addLayout(server_layout)
+        server_layout.addLayout(server_url_layout)
         
-        # Job ID input
-        job_id_layout = QHBoxLayout()
-        job_id_layout.addWidget(QLabel("Job ID:"))
-        self.job_id_input = QLineEdit()
-        self.job_id_input.setPlaceholderText("Enter job ID to connect")
-        job_id_layout.addWidget(self.job_id_input)
-        job_layout.addLayout(job_id_layout)
+        # Server status
+        self.server_status = QLabel("Not connected")
+        self.server_status.setStyleSheet("color: red;")
+        server_layout.addWidget(self.server_status)
         
-        # Job control buttons
-        button_layout = QHBoxLayout()
+        server_group.setLayout(server_layout)
+        layout.addWidget(server_group)
         
-        self.create_job_button = QPushButton("Create Job")
-        self.create_job_button.clicked.connect(self.create_job)
-        button_layout.addWidget(self.create_job_button)
+        # Inference configuration group
+        inference_group = QGroupBox("Inference Configuration")
+        inference_layout = QVBoxLayout()
         
-        self.connect_button = QPushButton("Connect to Job")
-        self.connect_button.clicked.connect(self.connect_to_job)
-        self.connect_button.setEnabled(False)
-        button_layout.addWidget(self.connect_button)
+        # Patch size configuration
+        patch_layout = QHBoxLayout()
+        patch_layout.addWidget(QLabel("Patch Size:"))
+        self.patch_size_input = QSpinBox()
+        self.patch_size_input.setRange(64, 512)
+        self.patch_size_input.setValue(128)
+        self.patch_size_input.setSuffix(" px")
+        patch_layout.addWidget(self.patch_size_input)
+        inference_layout.addLayout(patch_layout)
         
-        self.disconnect_button = QPushButton("Disconnect")
-        self.disconnect_button.clicked.connect(self.disconnect_from_job)
-        self.disconnect_button.setEnabled(False)
-        button_layout.addWidget(self.disconnect_button)
+        # Overlap configuration
+        overlap_layout = QHBoxLayout()
+        overlap_layout.addWidget(QLabel("Overlap:"))
+        self.overlap_input = QSpinBox()
+        self.overlap_input.setRange(0, 50)
+        self.overlap_input.setValue(25)
+        self.overlap_input.setSuffix("%")
+        overlap_layout.addWidget(self.overlap_input)
+        inference_layout.addLayout(overlap_layout)
         
-        self.reconnect_button = QPushButton("Reconnect")
-        self.reconnect_button.clicked.connect(self.manual_reconnect)
-        self.reconnect_button.setEnabled(False)
-        button_layout.addWidget(self.reconnect_button)
+        # Test Time Augmentation checkbox
+        self.use_tta_checkbox = QCheckBox("Use Test Time Augmentation (TTA)")
+        self.use_tta_checkbox.setChecked(True)
+        inference_layout.addWidget(self.use_tta_checkbox)
         
-        job_layout.addLayout(button_layout)
+        inference_group.setLayout(inference_layout)
+        layout.addWidget(inference_group)
         
-        # Connection status
-        self.connection_status = QLabel("Disconnected")
-        self.connection_status.setStyleSheet("color: red;")
-        job_layout.addWidget(self.connection_status)
+        # Main action group
+        action_group = QGroupBox("Inference Control")
+        action_layout = QVBoxLayout()
         
-        job_group.setLayout(job_layout)
-        layout.addWidget(job_group)
+        # Main inference button
+        self.run_inference_button = QPushButton("Upload & Run Inference")
+        self.run_inference_button.clicked.connect(self.run_inference)
+        self.run_inference_button.setEnabled(False)
+        self.run_inference_button.setStyleSheet("QPushButton { background-color: #4CAF50; color: white; font-weight: bold; padding: 8px; }")
+        action_layout.addWidget(self.run_inference_button)
+        
+        # Cancel button
+        self.cancel_inference_button = QPushButton("Cancel Inference")
+        self.cancel_inference_button.clicked.connect(self.cancel_inference)
+        self.cancel_inference_button.setEnabled(False)
+        self.cancel_inference_button.setStyleSheet("QPushButton { background-color: #f44336; color: white; }")
+        action_layout.addWidget(self.cancel_inference_button)
+        
+        # Progress bar
+        self.progress_bar = QProgressBar()
+        self.progress_bar.setVisible(False)
+        action_layout.addWidget(self.progress_bar)
+        
+        # Status label
+        self.status_label = QLabel("Ready to run inference")
+        self.status_label.setStyleSheet("color: green;")
+        action_layout.addWidget(self.status_label)
+        
+        action_group.setLayout(action_layout)
+        layout.addWidget(action_group)
         
         # Volume info group
         info_group = QGroupBox("Volume Information")
@@ -183,8 +218,12 @@ class CryoMambaWidget(QWidget):
             )
             
             self.current_volume = data
+            self.current_volume_path = file_path
             self.toggle_3d_button.setEnabled(True)
             self.clear_button.setEnabled(True)
+            self.run_inference_button.setEnabled(True)
+            self.status_label.setText("Volume loaded - ready to run inference")
+            self.status_label.setStyleSheet("color: green;")
             
         except Exception as e:
             error_msg = f"Failed to load MRC file: {str(e)}"
@@ -234,8 +273,12 @@ Std Dev: {metadata['std_intensity']:.2f}"""
             
             # Reset UI state
             self.current_volume = None
+            self.current_volume_path = None
             self.toggle_3d_button.setEnabled(False)
             self.clear_button.setEnabled(False)
+            self.run_inference_button.setEnabled(False)
+            self.status_label.setText("No volume loaded")
+            self.status_label.setStyleSheet("color: gray;")
             self.info_text.clear()
             
     def toggle_3d_view(self):
@@ -259,20 +302,18 @@ Std Dev: {metadata['std_intensity']:.2f}"""
     # WebSocket event handlers
     def on_websocket_connected(self, job_id: str):
         """Handle WebSocket connection."""
-        self.connection_status.setText(f"Connected to job {job_id}")
-        self.connection_status.setStyleSheet("color: green;")
-        self.connect_button.setEnabled(False)
-        self.disconnect_button.setEnabled(True)
-        self.reconnect_button.setEnabled(False)
+        self.server_status.setText(f"Connected to job {job_id}")
+        self.server_status.setStyleSheet("color: green;")
+        self.status_label.setText(f"Connected to inference job {job_id}")
+        self.status_label.setStyleSheet("color: blue;")
         self.info_text.append(f"Connected to job {job_id}")
     
     def on_websocket_disconnected(self, job_id: str):
         """Handle WebSocket disconnection."""
-        self.connection_status.setText("Disconnected")
-        self.connection_status.setStyleSheet("color: red;")
-        self.connect_button.setEnabled(True)
-        self.disconnect_button.setEnabled(False)
-        self.reconnect_button.setEnabled(False)
+        self.server_status.setText("Disconnected")
+        self.server_status.setStyleSheet("color: red;")
+        self.status_label.setText("Disconnected from server")
+        self.status_label.setStyleSheet("color: red;")
         self.info_text.append(f"Disconnected from job {job_id}")
     
     def on_preview_received(self, job_id: str, preview_data: dict):
@@ -313,6 +354,13 @@ Std Dev: {metadata['std_intensity']:.2f}"""
     def on_progress_received(self, job_id: str, progress_data: dict):
         """Handle progress updates."""
         progress_msg = progress_data.get("message", "Progress update")
+        progress_value = progress_data.get("progress", 0.0)
+        
+        # Update progress bar
+        if self.progress_bar.isVisible():
+            self.progress_bar.setValue(int(progress_value * 100))
+        
+        self.status_label.setText(f"Inference progress: {int(progress_value * 100)}%")
         self.info_text.append(f"Progress: {progress_msg}")
     
     def on_error_received(self, job_id: str, error_data: dict):
@@ -338,13 +386,23 @@ Std Dev: {metadata['std_intensity']:.2f}"""
     def on_job_completed(self, job_id: str, completion_data: dict):
         """Handle job completion."""
         self.info_text.append(f"Job {job_id} completed")
-        self.disconnect_from_job()
+        self.status_label.setText("Inference completed successfully!")
+        self.status_label.setStyleSheet("color: green;")
+        
+        # Hide progress bar and re-enable controls
+        self.progress_bar.setVisible(False)
+        self.run_inference_button.setEnabled(True)
+        self.cancel_inference_button.setEnabled(False)
+        self.is_inference_running = False
+        
+        # Download and overlay results
+        self.download_and_overlay_results(job_id)
     
-    # Job control methods
+    # Production workflow methods
     def check_server_connection(self):
         """Check server connection status."""
         try:
-            server_url = self.server_url_input.text().replace("ws://", "http://").replace("wss://", "https://")
+            server_url = self.server_url_input.text()
             
             # Check health endpoint
             health_response = requests.get(f"{server_url}/v1/healthz", timeout=5)
@@ -355,38 +413,140 @@ Std Dev: {metadata['std_intensity']:.2f}"""
             info_response.raise_for_status()
             
             info_data = info_response.json()
+            self.server_status.setText(f"Connected: {info_data.get('service', 'Unknown')} v{info_data.get('version', 'Unknown')}")
+            self.server_status.setStyleSheet("color: green;")
             self.info_text.append(f"Server connected: {info_data.get('service', 'Unknown')} v{info_data.get('version', 'Unknown')}")
             
         except requests.exceptions.ConnectionError:
+            self.server_status.setText("Connection failed")
+            self.server_status.setStyleSheet("color: red;")
             self.info_text.append("Server connection failed: Cannot reach server")
         except requests.exceptions.Timeout:
+            self.server_status.setText("Connection timeout")
+            self.server_status.setStyleSheet("color: red;")
             self.info_text.append("Server connection failed: Request timed out")
         except requests.exceptions.HTTPError as e:
+            self.server_status.setText(f"HTTP Error {e.response.status_code}")
+            self.server_status.setStyleSheet("color: red;")
             self.info_text.append(f"Server connection failed: HTTP {e.response.status_code}")
         except Exception as e:
+            self.server_status.setText("Connection error")
+            self.server_status.setStyleSheet("color: red;")
             self.info_text.append(f"Server connection failed: {str(e)}")
     
-    def create_job(self):
-        """Create a new job on the server."""
+    def run_inference(self):
+        """Main production workflow: Upload file and run inference."""
+        if not self.current_volume_path:
+            self.info_text.append("No volume loaded. Please load an .mrc file first.")
+            return
+        
+        if self.is_inference_running:
+            self.info_text.append("Inference is already running.")
+            return
+        
         try:
-            # Extract server URL from WebSocket URL
-            server_url = self.server_url_input.text().replace("ws://", "http://").replace("wss://", "https://")
+            self.is_inference_running = True
+            self.run_inference_button.setEnabled(False)
+            self.cancel_inference_button.setEnabled(True)
+            self.progress_bar.setVisible(True)
+            self.progress_bar.setValue(0)
+            self.status_label.setText("Starting inference...")
+            self.status_label.setStyleSheet("color: blue;")
             
-            # First check server health
-            health_response = requests.get(f"{server_url}/v1/healthz", timeout=5)
-            health_response.raise_for_status()
+            # Step 1: Upload file
+            self.status_label.setText("Uploading volume...")
+            upload_id = self.upload_volume()
+            if not upload_id:
+                raise Exception("Failed to upload volume")
             
-            # Create job with volume information if available
-            job_params = {}
-            if self.current_volume is not None:
-                job_params = {
-                    "volume_shape": list(self.current_volume.shape),
-                    "volume_dtype": str(self.current_volume.dtype),
-                    "has_volume": True
+            # Step 2: Create job with upload reference
+            self.status_label.setText("Creating inference job...")
+            job_id = self.create_inference_job(upload_id)
+            if not job_id:
+                raise Exception("Failed to create inference job")
+            
+            # Step 3: Connect to job via WebSocket
+            self.status_label.setText("Connecting to inference job...")
+            self.connect_to_inference_job(job_id)
+            
+            # Step 4: Start inference
+            self.status_label.setText("Starting inference...")
+            self.start_inference_processing(job_id)
+            
+        except Exception as e:
+            self.info_text.append(f"Error running inference: {str(e)}")
+            self.status_label.setText("Inference failed")
+            self.status_label.setStyleSheet("color: red;")
+            self.is_inference_running = False
+            self.run_inference_button.setEnabled(True)
+            self.cancel_inference_button.setEnabled(False)
+            self.progress_bar.setVisible(False)
+    
+    def upload_volume(self):
+        """Upload the current volume to the server."""
+        try:
+            server_url = self.server_url_input.text()
+            
+            # Initialize upload
+            chunk_size = 8 * 1024 * 1024  # 8MB chunks
+            init_response = requests.post(f"{server_url}/v1/uploads/init", json={
+                "filename": Path(self.current_volume_path).name,
+                "total_size_bytes": self.current_volume.nbytes,
+                "chunk_size_bytes": chunk_size
+            }, timeout=10)
+            init_response.raise_for_status()
+            
+            upload_data = init_response.json()
+            upload_id = upload_data["upload_id"]
+            self.current_upload_id = upload_id
+            
+            # Upload file in chunks
+            total_chunks = (self.current_volume.nbytes + chunk_size - 1) // chunk_size
+            
+            with open(self.current_volume_path, 'rb') as f:
+                for chunk_idx in range(total_chunks):
+                    chunk_data = f.read(chunk_size)
+                    
+                    # Upload chunk
+                    files = {'content': (f'chunk_{chunk_idx}', chunk_data, 'application/octet-stream')}
+                    upload_response = requests.put(f"{server_url}/v1/uploads/{upload_id}/part/{chunk_idx}", files=files, timeout=30)
+                    upload_response.raise_for_status()
+                    
+                    # Update progress
+                    upload_progress = (chunk_idx + 1) / total_chunks * 0.3  # Upload is 30% of total progress
+                    self.progress_bar.setValue(int(upload_progress * 100))
+                    self.status_label.setText(f"Uploading... {int(upload_progress * 100)}%")
+            
+            # Complete the upload
+            self.status_label.setText("Completing upload...")
+            complete_response = requests.post(f"{server_url}/v1/uploads/{upload_id}/complete", json={}, timeout=30)
+            complete_response.raise_for_status()
+            
+            self.info_text.append(f"Volume uploaded successfully: {upload_id}")
+            return upload_id
+            
+        except Exception as e:
+            self.info_text.append(f"Upload failed: {str(e)}")
+            return None
+    
+    def create_inference_job(self, upload_id):
+        """Create an inference job with the uploaded volume."""
+        try:
+            server_url = self.server_url_input.text()
+            
+            # Get inference parameters from UI
+            job_params = {
+                "volume_shape": list(self.current_volume.shape),
+                "volume_dtype": str(self.current_volume.dtype),
+                "has_volume": True,
+                "params": {
+                    "upload_id": upload_id,
+                    "patch_size": self.patch_size_input.value(),
+                    "overlap_percent": self.overlap_input.value(),
+                    "use_tta": self.use_tta_checkbox.isChecked(),
+                    "dummy_inference": False  # Use real nnU-Net
                 }
-                self.info_text.append(f"Creating job with volume: {self.current_volume.shape}")
-            else:
-                self.info_text.append("Creating job without volume (will use default test shape)")
+            }
             
             # Create job
             response = requests.post(f"{server_url}/v1/jobs", json=job_params, timeout=10)
@@ -394,80 +554,123 @@ Std Dev: {metadata['std_intensity']:.2f}"""
             
             job_data = response.json()
             job_id = job_data.get("job_id")
+            self.current_job_id = job_id
             
-            if job_id:
-                self.job_id_input.setText(job_id)
-                self.connect_button.setEnabled(True)
-                self.info_text.append(f"Created job: {job_id}")
-            else:
-                self.info_text.append("Failed to create job: No job ID returned")
-                
-        except requests.exceptions.ConnectionError:
-            self.info_text.append("Error: Cannot connect to server. Please check server URL and ensure server is running.")
-        except requests.exceptions.Timeout:
-            self.info_text.append("Error: Server request timed out. Server may be overloaded.")
-        except requests.exceptions.HTTPError as e:
-            self.info_text.append(f"Error: Server returned error {e.response.status_code}")
+            self.info_text.append(f"Created inference job: {job_id}")
+            return job_id
+            
         except Exception as e:
-            self.info_text.append(f"Error creating job: {str(e)}")
+            self.info_text.append(f"Failed to create job: {str(e)}")
+            return None
     
-    def connect_to_job(self):
-        """Connect to a job via WebSocket."""
-        job_id = self.job_id_input.text().strip()
-        if not job_id:
-            self.info_text.append("Please enter a job ID")
-            return
-        
-        # First verify job exists on server
+    def connect_to_inference_job(self, job_id):
+        """Connect to the inference job via WebSocket."""
         try:
-            server_url = self.server_url_input.text().replace("ws://", "http://").replace("wss://", "https://")
-            response = requests.get(f"{server_url}/v1/jobs/{job_id}", timeout=5)
-            response.raise_for_status()
-        except requests.exceptions.ConnectionError:
-            self.info_text.append("Error: Cannot connect to server. Please check server URL and ensure server is running.")
-            return
-        except requests.exceptions.HTTPError as e:
-            if e.response.status_code == 404:
-                self.info_text.append(f"Error: Job {job_id} not found on server.")
-            else:
-                self.info_text.append(f"Error: Server returned error {e.response.status_code}")
-            return
+            # Update WebSocket client URL
+            ws_url = self.server_url_input.text().replace("http://", "ws://").replace("https://", "wss://")
+            self.websocket_client.server_url = ws_url
+            
+            # Connect to job
+            asyncio.run_coroutine_threadsafe(
+                self.websocket_client.connect_to_job(job_id),
+                self.websocket_worker.loop
+            )
+            
         except Exception as e:
-            self.info_text.append(f"Error verifying job: {str(e)}")
+            self.info_text.append(f"Failed to connect to job: {str(e)}")
+            raise
+    
+    def start_inference_processing(self, job_id):
+        """Start the actual inference processing."""
+        try:
+            server_url = self.server_url_input.text()
+            
+            # Start inference
+            response = requests.put(f"{server_url}/v1/jobs/{job_id}", json={
+                "start_inference": True,
+                "dummy_inference": False
+            }, timeout=10)
+            response.raise_for_status()
+            
+            self.info_text.append(f"Started inference for job {job_id}")
+            
+        except Exception as e:
+            self.info_text.append(f"Failed to start inference: {str(e)}")
+            raise
+    
+    def cancel_inference(self):
+        """Cancel the current inference job."""
+        if not self.current_job_id:
             return
         
-        self.current_job_id = job_id
-        
-        # Update WebSocket client URL
-        self.websocket_client.server_url = self.server_url_input.text()
-        
-        # Connect to job (this will run in the worker thread)
-        asyncio.run_coroutine_threadsafe(
-            self.websocket_client.connect_to_job(job_id),
-            self.websocket_worker.loop
-        )
-    
-    def disconnect_from_job(self):
-        """Disconnect from current job."""
-        if self.current_job_id:
+        try:
+            server_url = self.server_url_input.text()
+            
+            # Cancel job
+            response = requests.delete(f"{server_url}/v1/jobs/{self.current_job_id}", timeout=10)
+            response.raise_for_status()
+            
+            # Reset UI state
+            self.is_inference_running = False
+            self.run_inference_button.setEnabled(True)
+            self.cancel_inference_button.setEnabled(False)
+            self.progress_bar.setVisible(False)
+            self.status_label.setText("Inference cancelled")
+            self.status_label.setStyleSheet("color: orange;")
+            
+            # Disconnect WebSocket
             asyncio.run_coroutine_threadsafe(
                 self.websocket_client.disconnect(),
                 self.websocket_worker.loop
             )
-            self.current_job_id = None
-    
-    def manual_reconnect(self):
-        """Manually reconnect to the current job."""
-        if self.current_job_id:
-            self.info_text.append("Attempting manual reconnection...")
-            # Reset reconnection attempts
-            self.websocket_client.reconnect_attempts = 0
             
-            # Try to reconnect
-            asyncio.run_coroutine_threadsafe(
-                self.websocket_client.connect_to_job(self.current_job_id),
-                self.websocket_worker.loop
-            )
+            self.info_text.append(f"Cancelled inference job {self.current_job_id}")
+            
+        except Exception as e:
+            self.info_text.append(f"Failed to cancel inference: {str(e)}")
+    
+    def download_and_overlay_results(self, job_id):
+        """Download and overlay the inference results."""
+        try:
+            server_url = self.server_url_input.text()
+            
+            # Get job details to find artifacts
+            response = requests.get(f"{server_url}/v1/jobs/{job_id}", timeout=10)
+            response.raise_for_status()
+            
+            job_data = response.json()
+            artifacts = job_data.get("artifacts", {})
+            
+            # Download mask if available
+            if "mask" in artifacts:
+                mask_url = artifacts["mask"]
+                mask_response = requests.get(mask_url, timeout=30)
+                mask_response.raise_for_status()
+                
+                # Save mask temporarily
+                mask_path = f"/tmp/cryomamba_mask_{job_id}.nii.gz"
+                with open(mask_path, 'wb') as f:
+                    f.write(mask_response.content)
+                
+                # Load and overlay mask
+                import nibabel as nib
+                mask_img = nib.load(mask_path)
+                mask_data = mask_img.get_fdata()
+                
+                # Add mask as labels layer
+                self.viewer.add_labels(
+                    mask_data.astype(np.uint8),
+                    name=f"Segmentation_{job_id}",
+                    opacity=0.7
+                )
+                
+                self.info_text.append(f"Downloaded and overlaid segmentation mask")
+                
+                # Clean up temp file
+                os.remove(mask_path)
+            
+        except Exception as e:
+            self.info_text.append(f"Failed to download results: {str(e)}")
     
     def closeEvent(self, event):
         """Handle widget close event."""

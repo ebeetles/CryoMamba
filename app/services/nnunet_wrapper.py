@@ -1,5 +1,6 @@
 import os
 import tempfile
+import time
 import logging
 from pathlib import Path
 from typing import Optional, Callable, Any, Dict
@@ -63,12 +64,20 @@ class NnUNetWrapper:
             raise FileNotFoundError(f"Model directory not found: {self.model_dir}")
 
         logger.info("Initializing nnU-Net predictor from %s", self.model_dir)
+        
+        # Convert string device to torch.device
+        import torch
+        if isinstance(self.device, str):
+            torch_device = torch.device(self.device)
+        else:
+            torch_device = self.device
+            
         predictor = nnUNetPredictor(
             tile_step_size=self.tile_step_size,
             use_gaussian=self.use_gaussian,
             use_mirroring=self.use_mirroring,
             perform_everything_on_device=self.perform_everything_on_device,
-            device=self.device,
+            device=torch_device,
             verbose=False,
         )
         predictor.initialize_from_trained_model_folder(
@@ -80,81 +89,164 @@ class NnUNetWrapper:
         self,
         volume: np.ndarray,
         progress_callback: Optional[Callable[[float], Any]] = None,
+        preview_callback: Optional[Callable[[np.ndarray], Any]] = None,
         tmp_dir: Optional[str] = None,
     ) -> np.ndarray:
-        """Run prediction on an in-memory numpy volume.
-
-        Current implementation uses a temporary NIfTI file round-trip to leverage
-        nnU-Net's file-based prediction API. This keeps the wrapper simple and
-        isolates dependency details. We can replace this with an in-memory path
-        once we add a direct-forward implementation.
+        """
+        Predict segmentation mask from numpy volume using direct network inference.
+        Uses patch-based processing to avoid multiprocessing issues.
+        Based on the working experiment implementation.
         """
         self.ensure_initialized()
-
+        
         # Basic input validation
         if volume.ndim not in (3, 4):
             raise ValueError("Expected a 3D or 4D volume (C,Z,Y,X or Z,Y,X)")
 
-        # If 3D, add a dummy channel axis expected by many medical models
-        if volume.ndim == 3:
-            volume = volume[None, ...]
-
         # Normalize to float32 if needed
         if volume.dtype != np.float32:
             volume = volume.astype(np.float32, copy=False)
+            
+        # Ensure we have the right shape for processing
+        # The working experiment expects (Z,Y,X) format
+        if volume.ndim == 4:
+            # If 4D, assume it's (C,Z,Y,X) and take the first channel
+            volume = volume[0]
+        
+        logger.info(f"Processing volume with shape: {volume.shape}")
+        logger.info(f"Volume data range: [{volume.min():.6f}, {volume.max():.6f}]")
+        logger.info(f"Volume data type: {volume.dtype}")
+        logger.info(f"Volume has NaN: {np.isnan(volume).any()}")
+        logger.info(f"Volume has Inf: {np.isinf(volume).any()}")
 
-        # Write to temp NIfTI files to use predict_from_files
-        work_dir_cm = Path(tmp_dir) if tmp_dir else Path(tempfile.mkdtemp(prefix="cm_nnunet_"))
-        input_path = work_dir_cm / "input.nii.gz"
-        output_path = work_dir_cm / "output.nii.gz"
-
-        try:
-            # Lazy import nibabel to avoid hard dependency at server boot
-            import nibabel as nib  # type: ignore
-
-            affine = np.eye(4, dtype=np.float32)
-            nib.save(nib.Nifti1Image(volume.squeeze(), affine), str(input_path))
-
-            # Hook progress if provided by sending a couple of coarse-grained updates
+        logger.info(f"Starting direct network inference on volume shape: {volume.shape}")
+        
+        # Apply CT normalization (from working experiment)
+        p1, p99 = np.percentile(volume, [1, 99])
+        
+        # Handle edge cases where p1 == p99 (constant volume)
+        if p1 == p99:
+            logger.warning(f"Volume appears to be constant (p1=p99={p1}), using simple normalization")
+            volume_normalized = np.zeros_like(volume, dtype=np.float32)
+            # Set to a small positive value to avoid all zeros
+            volume_normalized.fill(0.5)
+        else:
+            volume_clipped = np.clip(volume, p1, p99)
+            volume_normalized = (volume_clipped - p1) / (p99 - p1)
+        
+        logger.info(f"Applied CT normalization: [{p1:.3f}, {p99:.3f}] -> [0, 1]")
+        
+        # Use patch-based processing (from working experiment)
+        patch_size = (64, 64, 64)
+        overlap = 16
+        
+        logger.info(f"Processing in patches of size: {patch_size}")
+        
+        # Initialize output array
+        prediction_full = np.zeros(volume.shape, dtype=np.float32)
+        count_map = np.zeros(volume.shape, dtype=np.float32)
+        
+        # Calculate patch positions
+        patch_positions = []
+        for z in range(0, volume.shape[0], patch_size[0] - overlap):
+            for y in range(0, volume.shape[1], patch_size[1] - overlap):
+                for x in range(0, volume.shape[2], patch_size[2] - overlap):
+                    z_end = min(z + patch_size[0], volume.shape[0])
+                    y_end = min(y + patch_size[1], volume.shape[1])
+                    x_end = min(x + patch_size[2], volume.shape[2])
+                    patch_positions.append(((z, z_end), (y, y_end), (x, x_end)))
+        
+        logger.info(f"Total patches to process: {len(patch_positions)}")
+        
+        # Process patches using direct network inference
+        assert self._predictor is not None
+        network = self._predictor.network
+        network.eval()
+        
+        import torch
+        
+        for j, ((z_start, z_end), (y_start, y_end), (x_start, x_end)) in enumerate(patch_positions):
+            # Progress callback
             if progress_callback:
-                progress_callback(0.05)
-
-            assert self._predictor is not None  # for type checkers
-            self._predictor.predict_from_files(
-                [str(input_path)],
-                [str(output_path)],
-                save_probabilities=False,
-                overwrite=True,
-            )
-
-            if progress_callback:
-                progress_callback(0.9)
-
-            result_img = nib.load(str(output_path))
-            result = result_img.get_fdata().astype(np.float32)
-
-            if result.ndim == 3:
-                # return label volume (Z,Y,X)
-                return result
-            if result.ndim == 4:
-                # If channel axis present, choose argmax across channels as labels
-                return np.argmax(result, axis=0).astype(np.float32)
-            return result
-        finally:
-            # Best-effort cleanup
-            try:
-                if input_path.exists():
-                    input_path.unlink()
-                if output_path.exists():
-                    output_path.unlink()
-                # Do not remove the temp directory if provided by caller
-                if tmp_dir is None and work_dir_cm.exists():
-                    try:
-                        os.rmdir(work_dir_cm)
-                    except Exception:
-                        pass
-            except Exception:
-                pass
+                progress = 0.1 + (j / len(patch_positions)) * 0.8  # 10% to 90%
+                progress_callback(progress)
+            
+            # Log progress every 50 patches
+            if (j + 1) % 50 == 0:
+                logger.info(f"Processing patch {j+1}/{len(patch_positions)} ({(j+1)/len(patch_positions)*100:.1f}%)")
+            
+            # Extract patch
+            patch_data = volume_normalized[z_start:z_end, y_start:y_end, x_start:x_end]
+            
+            # Pad patch to expected size if needed
+            if patch_data.shape != patch_size:
+                padded_patch = np.zeros(patch_size)
+                padded_patch[:patch_data.shape[0], :patch_data.shape[1], :patch_data.shape[2]] = patch_data
+                patch_data = padded_patch
+            
+            # Convert to tensor
+            input_tensor = torch.from_numpy(patch_data).float()
+            input_tensor = input_tensor.unsqueeze(0).unsqueeze(0)
+            
+            # Run inference
+            with torch.no_grad():
+                output = network(input_tensor)
+                
+                if isinstance(output, (list, tuple)):
+                    output = output[0]
+                
+                patch_prediction = output.cpu().numpy()
+                
+                # Remove batch dimension
+                if len(patch_prediction.shape) == 5:
+                    patch_prediction = patch_prediction[0]
+                
+                # Handle channel dimension
+                if len(patch_prediction.shape) == 4:
+                    if patch_prediction.shape[0] == 2:
+                        patch_prediction_softmax = torch.softmax(torch.from_numpy(patch_prediction), dim=0).numpy()
+                        patch_prediction = patch_prediction_softmax[1]
+                    else:
+                        patch_prediction = patch_prediction[0]
+                
+                # Convert to binary
+                patch_prediction = (patch_prediction > 0.5).astype(np.float32)
+                
+                # Crop back to original patch size
+                original_patch_size = (z_end - z_start, y_end - y_start, x_end - x_start)
+                patch_prediction = patch_prediction[:original_patch_size[0], :original_patch_size[1], :original_patch_size[2]]
+                
+                # Add to full prediction
+                prediction_full[z_start:z_end, y_start:y_end, x_start:x_end] += patch_prediction
+                count_map[z_start:z_end, y_start:y_end, x_start:x_end] += 1
+            
+            # Preview callback for intermediate results
+            if preview_callback and (j + 1) % 10 == 0:  # Every 10 patches
+                # Create intermediate preview
+                intermediate_prediction = prediction_full / (count_map + 1e-8)
+                intermediate_binary = (intermediate_prediction > 0.5).astype(np.float32)
+                preview_callback(intermediate_binary)
+            
+            # Clear memory
+            del input_tensor, output, patch_prediction
+            if (j + 1) % 20 == 0:
+                import gc
+                gc.collect()
+        
+        # Average overlapping regions
+        prediction_full = prediction_full / (count_map + 1e-8)
+        prediction_binary = (prediction_full > 0.5).astype(np.float32)
+        
+        # Final progress callback
+        if progress_callback:
+            progress_callback(0.95)
+        
+        # Final preview callback
+        if preview_callback:
+            preview_callback(prediction_binary)
+        
+        logger.info(f"Direct network inference completed successfully")
+        return prediction_binary
 
     def warmup(self) -> Dict[str, Any]:
         """Attempt to initialize the model and return environment info."""
@@ -167,12 +259,24 @@ class NnUNetWrapper:
             info["status"] = "nnU-Net not installed"
             return info
         try:
+            # Check if model directory exists and has required files
+            if not self.model_dir.exists():
+                info["status"] = "error: Model directory not found"
+                return info
+                
+            required_files = ["dataset.json", "plans.json"]
+            for req_file in required_files:
+                if not (self.model_dir / req_file).exists():
+                    info["status"] = f"error: Missing required file {req_file}"
+                    return info
+            
+            # Try to initialize without actually running inference
             self.ensure_initialized()
             assert self._predictor is not None
             info.update(
                 {
                     "device": str(self._predictor.device),
-                    "cfg": str(self._predictor.cfg),
+                    "model_initialized": True,
                 }
             )
             info["status"] = "ready"

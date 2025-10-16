@@ -108,6 +108,61 @@ async def get_job(job_id: str):
         "updated_at": job.updated_at.isoformat()
     }
 
+@router.put("/jobs/{job_id}")
+async def update_job(job_id: str, job_update: dict):
+    """
+    Update job parameters to start inference or modify settings
+    """
+    if job_id not in jobs_db:
+        raise HTTPException(status_code=404, detail="Job not found")
+    
+    job = jobs_db[job_id]
+    
+    # Check if this is a request to start inference
+    if job_update.get("start_inference"):
+        logger.info(f"Starting inference for job: {job_id}")
+        
+        # Update job parameters
+        if job.params is None:
+            job.params = {}
+        job.params.update(job_update)
+        
+        # Configure inference type
+        if "dummy_inference" in job_update:
+            job.params["dummy_inference"] = job_update["dummy_inference"]
+            if not job_update["dummy_inference"]:
+                logger.info(f"Job {job_id} configured for real nnU-Net inference")
+            else:
+                logger.info(f"Job {job_id} configured for dummy inference")
+        
+        # Update job timestamp
+        job.updated_at = datetime.now()
+        
+        # Broadcast job update
+        await broadcast_job_update(job_id, "job_started", {
+            "job_id": job_id,
+            "state": job.state,
+            "message": "Inference started"
+        })
+        
+        return {
+            "job_id": job_id,
+            "status": "inference_started",
+            "message": "Inference has been started"
+        }
+    
+    # Handle other job updates
+    if job.params is None:
+        job.params = {}
+    job.params.update(job_update)
+    job.updated_at = datetime.now()
+    
+    return {
+        "job_id": job_id,
+        "status": "updated",
+        "message": "Job updated successfully"
+    }
+
 @router.delete("/jobs/{job_id}")
 async def cancel_job(job_id: str):
     """

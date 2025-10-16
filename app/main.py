@@ -66,7 +66,7 @@ app.add_middleware(
 add_error_handling_middleware(app)
 
 # Include routers
-from app.routes import health, info, jobs, websocket, uploads
+from app.routes import health, info, jobs, websocket, uploads, gpu
 from app.services.orchestrator import init_orchestrator, shutdown_orchestrator
 
 app.include_router(health.router, prefix="/v1")
@@ -74,6 +74,7 @@ app.include_router(info.router, prefix="/v1")
 app.include_router(jobs.router, prefix="/v1")
 app.include_router(uploads.router, prefix="/v1")
 app.include_router(websocket.router)
+app.include_router(gpu.router, prefix="/v1")
 
 # Orchestrator lifecycle
 @app.on_event("startup")
