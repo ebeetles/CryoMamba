@@ -4,6 +4,7 @@ from datetime import datetime
 import logging
 import uuid
 import asyncio
+import os
 from typing import Optional, Dict, Any
 from pydantic import BaseModel
 from app.routes.websocket import broadcast_job_update, start_fake_preview_streaming
@@ -68,12 +69,12 @@ async def create_job(job_request: JobCreateRequest = None):
     if orchestrator_service.orchestrator is not None:
         await orchestrator_service.orchestrator.submit(job_record)
     
-    # Broadcast job creation
-    await broadcast_job_update(job_id, "job_created", {
+    # Broadcast job creation (fire-and-forget)
+    asyncio.create_task(broadcast_job_update(job_id, "job_created", {
         "job_id": job_id,
         "state": job_record.state,
         "message": "Job created successfully"
-    })
+    }))
     
     # Preview streaming now handled by orchestrator during processing as needed
     logger.info(f"Created job: {job_id} with volume shape: {volume_shape}")
@@ -90,10 +91,15 @@ async def get_job(job_id: str):
     Get job status and details
     Returns mock job information
     """
-    if job_id not in jobs_db:
-        raise HTTPException(status_code=404, detail="Job not found")
-    
-    job = jobs_db[job_id]
+    # Prefer live job from orchestrator if available (has up-to-date progress/artifacts)
+    job = None
+    if orchestrator_service.orchestrator is not None:
+        job = orchestrator_service.orchestrator.get(job_id)
+    if job is None:
+        # Fallback to local jobs_db (e.g., before orchestrator submission in tests)
+        if job_id not in jobs_db:
+            raise HTTPException(status_code=404, detail="Job not found")
+        job = jobs_db[job_id]
     logger.info(f"Retrieved job: {job_id}")
     
     # Map internal 'queued' state to externally expected 'pending'
@@ -101,6 +107,7 @@ async def get_job(job_id: str):
     return {
         "job_id": job.job_id,
         "state": external_state,
+        "progress": job.progress,
         "params": job.params,
         "artifacts": job.artifacts,
         "errors": job.errors,
@@ -138,12 +145,12 @@ async def update_job(job_id: str, job_update: dict):
         # Update job timestamp
         job.updated_at = datetime.now()
         
-        # Broadcast job update
-        await broadcast_job_update(job_id, "job_started", {
+        # Broadcast job update (fire-and-forget)
+        asyncio.create_task(broadcast_job_update(job_id, "job_started", {
             "job_id": job_id,
             "state": job.state,
             "message": "Inference started"
-        })
+        }))
         
         return {
             "job_id": job_id,
@@ -189,12 +196,12 @@ async def cancel_job(job_id: str):
             pass
         del preview_tasks[job_id]
     
-    # Broadcast job cancellation
-    await broadcast_job_update(job_id, "job_cancelled", {
+    # Broadcast job cancellation (fire-and-forget)
+    asyncio.create_task(broadcast_job_update(job_id, "job_cancelled", {
         "job_id": job_id,
         "state": job.state,
         "message": "Job cancelled and preview streaming stopped"
-    })
+    }))
     
     logger.info(f"Cancelled job: {job_id}")
     
@@ -228,3 +235,29 @@ async def list_jobs():
                 "updated_at": job.updated_at.isoformat(),
             })
     return {"jobs": res}
+
+@router.get("/jobs/{job_id}/artifacts/{artifact_name}")
+async def download_artifact(job_id: str, artifact_name: str):
+    """
+    Download a specific artifact from a completed job.
+    """
+    if job_id not in jobs_db:
+        raise HTTPException(status_code=404, detail="Job not found")
+    
+    job = jobs_db[job_id]
+    
+    if not job.artifacts or artifact_name not in job.artifacts:
+        raise HTTPException(status_code=404, detail=f"Artifact '{artifact_name}' not found")
+    
+    artifact_path = job.artifacts[artifact_name]
+    
+    if not os.path.exists(artifact_path):
+        raise HTTPException(status_code=404, detail="Artifact file not found on server")
+    
+    # Return the file
+    from fastapi.responses import FileResponse
+    return FileResponse(
+        path=artifact_path,
+        filename=os.path.basename(artifact_path),
+        media_type='application/octet-stream'
+    )

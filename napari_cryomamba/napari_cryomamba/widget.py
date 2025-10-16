@@ -3,7 +3,7 @@ Main CryoMamba widget for napari integration.
 """
 
 from qtpy.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QLabel, QFileDialog, QTextEdit, QGroupBox, QLineEdit, QSpinBox, QCheckBox, QProgressBar
-from qtpy.QtCore import Qt, Signal, QThread
+from qtpy.QtCore import Qt, Signal, QThread, QTimer
 import napari
 import mrcfile
 import numpy as np
@@ -12,6 +12,7 @@ import asyncio
 import json
 import requests
 import os
+import time
 from .websocket_client import WebSocketClient, WebSocketWorker, PreviewDataProcessor
 
 
@@ -26,6 +27,10 @@ class CryoMambaWidget(QWidget):
         self.current_job_id = None
         self.current_upload_id = None
         self.is_inference_running = False
+        self._overlay_done = False
+        self._job_poll_timer: QTimer = QTimer(self)
+        self._job_poll_timer.setInterval(2000)  # 2s
+        self._job_poll_timer.timeout.connect(self._poll_job_status)
         
         # WebSocket components
         self.websocket_client = WebSocketClient()
@@ -354,14 +359,14 @@ Std Dev: {metadata['std_intensity']:.2f}"""
     def on_progress_received(self, job_id: str, progress_data: dict):
         """Handle progress updates."""
         progress_msg = progress_data.get("message", "Progress update")
-        progress_value = progress_data.get("progress", 0.0)
+        progress_value = float(progress_data.get("progress", 0.0) or 0.0)
         
         # Update progress bar
         if self.progress_bar.isVisible():
             self.progress_bar.setValue(int(progress_value * 100))
         
         self.status_label.setText(f"Inference progress: {int(progress_value * 100)}%")
-        self.info_text.append(f"Progress: {progress_msg}")
+        self.info_text.append(f"Progress: {int(progress_value * 100)}%")
     
     def on_error_received(self, job_id: str, error_data: dict):
         """Handle error messages."""
@@ -395,8 +400,11 @@ Std Dev: {metadata['std_intensity']:.2f}"""
         self.cancel_inference_button.setEnabled(False)
         self.is_inference_running = False
         
-        # Download and overlay results
-        self.download_and_overlay_results(job_id)
+        # Stop poller and download/overlay if not done yet
+        if self._job_poll_timer.isActive():
+            self._job_poll_timer.stop()
+        if not self._overlay_done:
+            self.download_and_overlay_results(job_id)
     
     # Production workflow methods
     def check_server_connection(self):
@@ -468,6 +476,9 @@ Std Dev: {metadata['std_intensity']:.2f}"""
             # Step 3: Connect to job via WebSocket
             self.status_label.setText("Connecting to inference job...")
             self.connect_to_inference_job(job_id)
+            # Start poller as fallback to WS
+            self._overlay_done = False
+            self._job_poll_timer.start()
             
             # Step 4: Start inference
             self.status_label.setText("Starting inference...")
@@ -581,19 +592,30 @@ Std Dev: {metadata['std_intensity']:.2f}"""
             raise
     
     def start_inference_processing(self, job_id):
-        """Start the actual inference processing."""
+        """Start the actual inference processing.
+        If the request times out, assume start succeeded and rely on WebSocket/polling.
+        """
         try:
             server_url = self.server_url_input.text()
             
-            # Start inference
-            response = requests.put(f"{server_url}/v1/jobs/{job_id}", json={
-                "start_inference": True,
-                "dummy_inference": False
-            }, timeout=10)
-            response.raise_for_status()
-            
-            self.info_text.append(f"Started inference for job {job_id}")
-            
+            self.info_text.append("Starting inference...")
+            try:
+                response = requests.put(
+                    f"{server_url}/v1/jobs/{job_id}",
+                    json={
+                        "start_inference": True,
+                        "dummy_inference": False
+                    },
+                    timeout=5,  # keep UI responsive; server should respond immediately
+                )
+                response.raise_for_status()
+                self.info_text.append(f"Started inference for job {job_id}")
+            except requests.exceptions.Timeout:
+                # Treat as non-fatal: server may still have started the job
+                self.info_text.append("Start request timed out; assuming started. Monitoring via WebSocket...")
+            except requests.exceptions.ConnectionError as e:
+                self.info_text.append(f"Connection error when starting inference: {str(e)}")
+                raise
         except Exception as e:
             self.info_text.append(f"Failed to start inference: {str(e)}")
             raise
@@ -642,9 +664,10 @@ Std Dev: {metadata['std_intensity']:.2f}"""
             artifacts = job_data.get("artifacts", {})
             
             # Download mask if available
-            if "mask" in artifacts:
-                mask_url = artifacts["mask"]
-                mask_response = requests.get(mask_url, timeout=30)
+            if "mask_nifti" in artifacts:
+                # Download the artifact from the server
+                artifact_url = f"{server_url}/v1/jobs/{job_id}/artifacts/mask_nifti"
+                mask_response = requests.get(artifact_url, timeout=30)
                 mask_response.raise_for_status()
                 
                 # Save mask temporarily
@@ -665,6 +688,7 @@ Std Dev: {metadata['std_intensity']:.2f}"""
                 )
                 
                 self.info_text.append(f"Downloaded and overlaid segmentation mask")
+                self._overlay_done = True
                 
                 # Clean up temp file
                 os.remove(mask_path)
@@ -680,3 +704,27 @@ Std Dev: {metadata['std_intensity']:.2f}"""
             self.websocket_worker.wait()
         
         event.accept()
+
+    def _poll_job_status(self):
+        """Fallback polling to fetch job status and artifacts if WS is missed."""
+        try:
+            if not self.current_job_id:
+                return
+            server_url = self.server_url_input.text()
+            r = requests.get(f"{server_url}/v1/jobs/{self.current_job_id}", timeout=5)
+            if r.status_code != 200:
+                return
+            data = r.json()
+            # Update progress
+            progress = float(data.get("progress", 0.0) or 0.0)
+            if self.progress_bar.isVisible():
+                self.progress_bar.setValue(int(progress * 100))
+            self.status_label.setText(f"Inference progress: {int(progress * 100)}%")
+            # If completed and not yet overlaid, download
+            state = data.get("state")
+            if state == "completed" and not self._overlay_done:
+                self.download_and_overlay_results(self.current_job_id)
+                self._job_poll_timer.stop()
+        except Exception:
+            # Silent fallback; WS remains primary
+            pass

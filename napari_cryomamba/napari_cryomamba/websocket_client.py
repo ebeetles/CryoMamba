@@ -158,9 +158,9 @@ class WebSocketClient(QObject):
             self.preview_received.emit(job_id, message_data)
         elif message_type == "progress":
             self.progress_received.emit(job_id, message_data)
-        elif message_type == "completed":
+        elif message_type == "job_completed":
             self.job_completed.emit(job_id, message_data)
-        elif message_type == "error":
+        elif message_type == "job_failed":
             self.error_received.emit(job_id, message_data)
         elif message_type == "connected":
             logger.info(f"Connected to job {job_id}")
