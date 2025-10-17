@@ -2,7 +2,7 @@
 Main CryoMamba widget for napari integration.
 """
 
-from qtpy.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QLabel, QFileDialog, QTextEdit, QGroupBox, QLineEdit, QSpinBox, QCheckBox, QProgressBar
+from qtpy.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QLabel, QFileDialog, QTextEdit, QGroupBox, QLineEdit, QSpinBox, QCheckBox, QProgressBar, QMenu, QAction, QMessageBox
 from qtpy.QtCore import Qt, Signal, QThread, QTimer
 import napari
 import mrcfile
@@ -14,6 +14,7 @@ import requests
 import os
 import time
 from .websocket_client import WebSocketClient, WebSocketWorker, PreviewDataProcessor
+from .export_service import export_service
 
 
 class PollingWorker(QThread):
@@ -236,6 +237,8 @@ class CryoMambaWidget(QWidget):
         self.current_volume = None
         self.current_volume_path = None
         self.current_job_id = None
+        self.current_mask = None
+        self.current_volume_metadata = None
         self.current_upload_id = None
         self.is_inference_running = False
         self._overlay_done = False
@@ -506,6 +509,33 @@ class CryoMambaWidget(QWidget):
         """)
         viz_layout.addWidget(self.clear_button)
         
+        # Export button
+        self.export_button = QPushButton("Export")
+        self.export_button.clicked.connect(self.show_export_menu)
+        self.export_button.setEnabled(False)
+        self.export_button.setStyleSheet("""
+            QPushButton { 
+                background-color: #e3f2fd; 
+                color: #1976d2; 
+                border: 1px solid #bbdefb;
+                border-radius: 3px;
+                padding: 6px 12px;
+            }
+            QPushButton:hover { 
+                background-color: #bbdefb; 
+                border-color: #90caf9;
+            }
+            QPushButton:pressed { 
+                background-color: #90caf9; 
+                border-color: #64b5f6;
+            }
+            QPushButton:disabled { 
+                background-color: #cccccc; 
+                color: #666666; 
+            }
+        """)
+        viz_layout.addWidget(self.export_button)
+        
         viz_group.setLayout(viz_layout)
         layout.addWidget(viz_group)
         
@@ -550,6 +580,7 @@ class CryoMambaWidget(QWidget):
             
             self.current_volume = data
             self.current_volume_path = file_path
+            self.current_volume_metadata = metadata
             self.toggle_3d_button.setEnabled(True)
             self.clear_button.setEnabled(True)
             self.run_inference_button.setEnabled(True)
@@ -965,6 +996,9 @@ Std Dev: {metadata['std_intensity']:.2f}"""
                     opacity=0.7
                 )
                 
+                # Set current mask for export functionality
+                self.set_current_mask(mask_data.astype(np.uint8), self.current_volume_metadata)
+                
                 self.info_text.append(f"Downloaded and overlaid segmentation mask")
                 self._overlay_done = True
                 
@@ -1027,3 +1061,121 @@ Std Dev: {metadata['std_intensity']:.2f}"""
         except Exception as e:
             # Silent fallback; WS remains primary
             pass
+    
+    def show_export_menu(self):
+        """Show export menu with format options."""
+        if self.current_mask is None:
+            QMessageBox.warning(self, "No Mask", "No mask data available for export.")
+            return
+        
+        # Create export menu
+        export_menu = QMenu(self)
+        
+        # MRC export action
+        mrc_action = QAction("Export as MRC", self)
+        mrc_action.triggered.connect(lambda: self.export_mask('mrc'))
+        export_menu.addAction(mrc_action)
+        
+        # NIfTI export action
+        nifti_action = QAction("Export as NIfTI", self)
+        nifti_action.triggered.connect(lambda: self.export_mask('nifti'))
+        export_menu.addAction(nifti_action)
+        
+        # NRRD export action
+        nrrd_action = QAction("Export as NRRD", self)
+        nrrd_action.triggered.connect(lambda: self.export_mask('nrrd'))
+        export_menu.addAction(nrrd_action)
+        
+        # PNG export action
+        png_action = QAction("Export as PNG", self)
+        png_action.triggered.connect(lambda: self.export_mask('png'))
+        export_menu.addAction(png_action)
+        
+        # Export status action
+        status_action = QAction("Export Status", self)
+        status_action.triggered.connect(self.show_export_status)
+        export_menu.addSeparator()
+        export_menu.addAction(status_action)
+        
+        # Show menu at button position
+        button_pos = self.export_button.mapToGlobal(self.export_button.rect().bottomLeft())
+        export_menu.exec_(button_pos)
+    
+    def export_mask(self, format_type: str):
+        """Export current mask in specified format."""
+        if self.current_mask is None:
+            QMessageBox.warning(self, "No Mask", "No mask data available for export.")
+            return
+        
+        # Get output file path
+        file_filter = self._get_file_filter(format_type)
+        output_path, _ = QFileDialog.getSaveFileName(
+            self,
+            f"Export Mask as {format_type.upper()}",
+            "",
+            file_filter
+        )
+        
+        if not output_path:
+            return
+        
+        # Prepare metadata
+        metadata = self.current_volume_metadata.copy() if self.current_volume_metadata else {}
+        metadata.update(export_service.get_export_info(self.current_mask))
+        
+        # Show progress
+        self.status_label.setText(f"Exporting mask as {format_type.upper()}...")
+        self.status_label.setStyleSheet("color: orange;")
+        
+        # Export mask
+        success = export_service.export_mask(
+            self.current_mask,
+            output_path,
+            format_type,
+            metadata
+        )
+        
+        if success:
+            self.status_label.setText(f"Mask exported successfully to {Path(output_path).name}")
+            self.status_label.setStyleSheet("color: green;")
+            self.info_text.append(f"Exported mask as {format_type.upper()}: {output_path}")
+        else:
+            self.status_label.setText("Export failed")
+            self.status_label.setStyleSheet("color: red;")
+            QMessageBox.critical(self, "Export Failed", f"Failed to export mask as {format_type.upper()}")
+    
+    def _get_file_filter(self, format_type: str) -> str:
+        """Get file filter string for specified format."""
+        filters = {
+            'mrc': 'MRC Files (*.mrc);;All Files (*)',
+            'nifti': 'NIfTI Files (*.nii *.nii.gz);;All Files (*)',
+            'nrrd': 'NRRD Files (*.nrrd);;All Files (*)',
+            'png': 'PNG Files (*.png);;All Files (*)'
+        }
+        return filters.get(format_type, 'All Files (*)')
+    
+    def set_current_mask(self, mask_data: np.ndarray, metadata: dict = None):
+        """Set the current mask data for export."""
+        self.current_mask = mask_data
+        if metadata:
+            self.current_volume_metadata = metadata
+        self.export_button.setEnabled(True)
+    
+    def show_export_status(self):
+        """Show export performance and queue status."""
+        stats = export_service.get_export_stats()
+        queue_status = export_service.get_queue_status()
+        
+        status_text = f"""Export Statistics:
+Total Exports: {stats['total_exports']}
+Successful: {stats['successful_exports']}
+Failed: {stats['failed_exports']}
+Average Time: {stats['average_export_time']:.2f}s
+Last Export: {stats['last_export_time']:.2f}s
+
+Queue Status:
+Queue Size: {queue_status['queue_size']}
+Worker Running: {queue_status['worker_running']}
+Max Concurrent: {queue_status['max_concurrent']}"""
+        
+        QMessageBox.information(self, "Export Status", status_text)
