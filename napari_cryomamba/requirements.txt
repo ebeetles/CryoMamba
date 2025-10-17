@@ -4,6 +4,7 @@ napari[all]>=0.4.0
 mrcfile>=1.4.0
 numpy>=1.20.0
 qtpy>=2.0.0
+aiohttp>=3.8.0
 
 # Optional dependencies for better performance
 scipy>=1.7.0

@@ -16,6 +16,226 @@ import time
 from .websocket_client import WebSocketClient, WebSocketWorker, PreviewDataProcessor
 
 
+class PollingWorker(QThread):
+    """Worker thread for polling job status without blocking UI."""
+    
+    # Signals
+    status_updated = Signal(dict)  # job status data
+    error_occurred = Signal(str)  # error message
+    
+    def __init__(self, server_url: str, job_id: str, poll_interval: float = 2.0):
+        super().__init__()
+        self.server_url = server_url
+        self.job_id = job_id
+        self.poll_interval = poll_interval
+        self._should_stop = False
+    
+    def stop(self):
+        """Request the worker to stop."""
+        self._should_stop = True
+    
+    def run(self):
+        """Poll job status in background thread."""
+        import time
+        
+        while not self._should_stop:
+            try:
+                # Make HTTP request in background thread
+                r = requests.get(
+                    f"{self.server_url}/v1/jobs/{self.job_id}", 
+                    timeout=5
+                )
+                if r.status_code == 200:
+                    data = r.json()
+                    self.status_updated.emit(data)
+                    
+                    # Stop polling if job completed or failed
+                    state = data.get("state", "")
+                    if state in ["completed", "failed", "cancelled"]:
+                        break
+                        
+            except Exception as e:
+                # Don't emit errors for connection issues during polling
+                pass
+            
+            # Sleep between polls
+            for _ in range(int(self.poll_interval * 10)):
+                if self._should_stop:
+                    break
+                time.sleep(0.1)
+
+
+class InferenceWorker(QThread):
+    """Worker thread for running inference operations without blocking UI."""
+    
+    # Signals for communicating with main thread
+    upload_progress = Signal(int, str)  # progress_percent, status_message
+    job_created = Signal(str)  # job_id
+    inference_started = Signal(str)  # job_id
+    error_occurred = Signal(str)  # error_message
+    finished = Signal()
+    
+    def __init__(self, server_url: str, volume_path: str, volume: np.ndarray, 
+                 patch_size: int, overlap_percent: int, use_tta: bool):
+        super().__init__()
+        self.server_url = server_url
+        self.volume_path = volume_path
+        self.volume = volume
+        self.patch_size = patch_size
+        self.overlap_percent = overlap_percent
+        self.use_tta = use_tta
+        self.upload_id = None
+        self.job_id = None
+        self._should_stop = False
+    
+    def stop(self):
+        """Request the worker to stop."""
+        self._should_stop = True
+    
+    def run(self):
+        """Run the inference workflow in background thread."""
+        try:
+            # Step 1: Upload volume
+            if self._should_stop:
+                return
+            self.upload_progress.emit(0, "Starting upload...")
+            upload_id = self._upload_volume()
+            if not upload_id:
+                self.error_occurred.emit("Failed to upload volume")
+                return
+            self.upload_id = upload_id
+            
+            # Step 2: Create job
+            if self._should_stop:
+                return
+            self.upload_progress.emit(35, "Creating inference job...")
+            job_id = self._create_inference_job(upload_id)
+            if not job_id:
+                self.error_occurred.emit("Failed to create inference job")
+                return
+            self.job_id = job_id
+            self.job_created.emit(job_id)
+            
+            # Step 3: Start inference (server will handle async execution)
+            if self._should_stop:
+                return
+            self.upload_progress.emit(40, "Starting inference...")
+            if not self._start_inference(job_id):
+                self.error_occurred.emit("Failed to start inference")
+                return
+            
+            self.inference_started.emit(job_id)
+            self.finished.emit()
+            
+        except Exception as e:
+            self.error_occurred.emit(f"Inference workflow error: {str(e)}")
+    
+    def _upload_volume(self):
+        """Upload the volume to the server."""
+        try:
+            # Initialize upload
+            chunk_size = 8 * 1024 * 1024  # 8MB chunks
+            init_response = requests.post(f"{self.server_url}/v1/uploads/init", json={
+                "filename": Path(self.volume_path).name,
+                "total_size_bytes": self.volume.nbytes,
+                "chunk_size_bytes": chunk_size
+            }, timeout=10)
+            init_response.raise_for_status()
+            
+            upload_data = init_response.json()
+            upload_id = upload_data["upload_id"]
+            
+            # Upload file in chunks
+            total_chunks = (self.volume.nbytes + chunk_size - 1) // chunk_size
+            
+            with open(self.volume_path, 'rb') as f:
+                for chunk_idx in range(total_chunks):
+                    if self._should_stop:
+                        return None
+                    
+                    chunk_data = f.read(chunk_size)
+                    
+                    # Upload chunk
+                    files = {'content': (f'chunk_{chunk_idx}', chunk_data, 'application/octet-stream')}
+                    upload_response = requests.put(
+                        f"{self.server_url}/v1/uploads/{upload_id}/part/{chunk_idx}", 
+                        files=files, 
+                        timeout=30
+                    )
+                    upload_response.raise_for_status()
+                    
+                    # Update progress (upload is 30% of total workflow)
+                    upload_progress = int((chunk_idx + 1) / total_chunks * 30)
+                    self.upload_progress.emit(upload_progress, f"Uploading... {upload_progress}%")
+            
+            # Complete the upload
+            if self._should_stop:
+                return None
+            self.upload_progress.emit(30, "Completing upload...")
+            complete_response = requests.post(
+                f"{self.server_url}/v1/uploads/{upload_id}/complete", 
+                json={}, 
+                timeout=30
+            )
+            complete_response.raise_for_status()
+            
+            return upload_id
+            
+        except Exception as e:
+            self.error_occurred.emit(f"Upload failed: {str(e)}")
+            return None
+    
+    def _create_inference_job(self, upload_id):
+        """Create an inference job with the uploaded volume."""
+        try:
+            job_params = {
+                "volume_shape": list(self.volume.shape),
+                "volume_dtype": str(self.volume.dtype),
+                "has_volume": True,
+                "params": {
+                    "upload_id": upload_id,
+                    "patch_size": self.patch_size,
+                    "overlap_percent": self.overlap_percent,
+                    "use_tta": self.use_tta,
+                    "dummy_inference": False
+                }
+            }
+            
+            response = requests.post(
+                f"{self.server_url}/v1/jobs", 
+                json=job_params, 
+                timeout=10
+            )
+            response.raise_for_status()
+            
+            job_data = response.json()
+            return job_data.get("job_id")
+            
+        except Exception as e:
+            self.error_occurred.emit(f"Failed to create job: {str(e)}")
+            return None
+    
+    def _start_inference(self, job_id):
+        """Start the inference processing."""
+        try:
+            response = requests.put(
+                f"{self.server_url}/v1/jobs/{job_id}",
+                json={
+                    "start_inference": True,
+                    "dummy_inference": False
+                },
+                timeout=5
+            )
+            response.raise_for_status()
+            return True
+        except requests.exceptions.Timeout:
+            # Treat as non-fatal: server may still have started the job
+            return True
+        except Exception as e:
+            self.error_occurred.emit(f"Failed to start inference: {str(e)}")
+            return False
+
+
 class CryoMambaWidget(QWidget):
     """Main CryoMamba widget for napari."""
     
@@ -28,14 +248,15 @@ class CryoMambaWidget(QWidget):
         self.current_upload_id = None
         self.is_inference_running = False
         self._overlay_done = False
-        self._job_poll_timer: QTimer = QTimer(self)
-        self._job_poll_timer.setInterval(2000)  # 2s
-        self._job_poll_timer.timeout.connect(self._poll_job_status)
         
         # WebSocket components
         self.websocket_client = WebSocketClient()
         self.websocket_worker = WebSocketWorker(self.websocket_client)
         self.setup_websocket_connections()
+        
+        # Worker threads for async operations
+        self.inference_worker = None
+        self.polling_worker = None
         
         self.setup_ui()
     
@@ -443,7 +664,7 @@ Std Dev: {metadata['std_intensity']:.2f}"""
             self.info_text.append(f"Server connection failed: {str(e)}")
     
     def run_inference(self):
-        """Main production workflow: Upload file and run inference."""
+        """Main production workflow: Upload file and run inference asynchronously."""
         if not self.current_volume_path:
             self.info_text.append("No volume loaded. Please load an .mrc file first.")
             return
@@ -453,6 +674,7 @@ Std Dev: {metadata['std_intensity']:.2f}"""
             return
         
         try:
+            # Set UI state
             self.is_inference_running = True
             self.run_inference_button.setEnabled(False)
             self.cancel_inference_button.setEnabled(True)
@@ -460,169 +682,116 @@ Std Dev: {metadata['std_intensity']:.2f}"""
             self.progress_bar.setValue(0)
             self.status_label.setText("Starting inference...")
             self.status_label.setStyleSheet("color: blue;")
+            self.info_text.append("Starting asynchronous inference workflow...")
             
-            # Step 1: Upload file
-            self.status_label.setText("Uploading volume...")
-            upload_id = self.upload_volume()
-            if not upload_id:
-                raise Exception("Failed to upload volume")
+            # Force UI update before starting worker
+            from qtpy.QtWidgets import QApplication
+            QApplication.processEvents()
             
-            # Step 2: Create job with upload reference
-            self.status_label.setText("Creating inference job...")
-            job_id = self.create_inference_job(upload_id)
-            if not job_id:
-                raise Exception("Failed to create inference job")
+            # Create and configure worker thread
+            # Note: We only pass the volume path, not the volume data itself to avoid copying
+            self.info_text.append("Creating worker thread...")
+            self.inference_worker = InferenceWorker(
+                server_url=self.server_url_input.text(),
+                volume_path=self.current_volume_path,
+                volume=self.current_volume,  # Only used for metadata (shape, dtype)
+                patch_size=self.patch_size_input.value(),
+                overlap_percent=self.overlap_input.value(),
+                use_tta=self.use_tta_checkbox.isChecked()
+            )
             
-            # Step 3: Connect to job via WebSocket
-            self.status_label.setText("Connecting to inference job...")
-            self.connect_to_inference_job(job_id)
-            # Start poller as fallback to WS
-            self._overlay_done = False
-            self._job_poll_timer.start()
+            # Connect worker signals
+            self.info_text.append("Connecting signals...")
+            self.inference_worker.upload_progress.connect(self.on_worker_upload_progress)
+            self.inference_worker.job_created.connect(self.on_worker_job_created)
+            self.inference_worker.inference_started.connect(self.on_worker_inference_started)
+            self.inference_worker.error_occurred.connect(self.on_worker_error)
+            self.inference_worker.finished.connect(self.on_worker_finished)
             
-            # Step 4: Start inference
-            self.status_label.setText("Starting inference...")
-            self.start_inference_processing(job_id)
+            # Start worker - this should return immediately
+            self.info_text.append("Starting worker thread... UI should remain responsive!")
+            self.inference_worker.start()
+            self.info_text.append("Worker thread started! You can now interact with the UI.")
+            
+            # Force another UI update
+            QApplication.processEvents()
             
         except Exception as e:
-            self.info_text.append(f"Error running inference: {str(e)}")
-            self.status_label.setText("Inference failed")
+            self.info_text.append(f"Error starting inference: {str(e)}")
+            self.status_label.setText("Failed to start inference")
             self.status_label.setStyleSheet("color: red;")
             self.is_inference_running = False
             self.run_inference_button.setEnabled(True)
             self.cancel_inference_button.setEnabled(False)
             self.progress_bar.setVisible(False)
     
-    def upload_volume(self):
-        """Upload the current volume to the server."""
-        try:
-            server_url = self.server_url_input.text()
-            
-            # Initialize upload
-            chunk_size = 8 * 1024 * 1024  # 8MB chunks
-            init_response = requests.post(f"{server_url}/v1/uploads/init", json={
-                "filename": Path(self.current_volume_path).name,
-                "total_size_bytes": self.current_volume.nbytes,
-                "chunk_size_bytes": chunk_size
-            }, timeout=10)
-            init_response.raise_for_status()
-            
-            upload_data = init_response.json()
-            upload_id = upload_data["upload_id"]
-            self.current_upload_id = upload_id
-            
-            # Upload file in chunks
-            total_chunks = (self.current_volume.nbytes + chunk_size - 1) // chunk_size
-            
-            with open(self.current_volume_path, 'rb') as f:
-                for chunk_idx in range(total_chunks):
-                    chunk_data = f.read(chunk_size)
-                    
-                    # Upload chunk
-                    files = {'content': (f'chunk_{chunk_idx}', chunk_data, 'application/octet-stream')}
-                    upload_response = requests.put(f"{server_url}/v1/uploads/{upload_id}/part/{chunk_idx}", files=files, timeout=30)
-                    upload_response.raise_for_status()
-                    
-                    # Update progress
-                    upload_progress = (chunk_idx + 1) / total_chunks * 0.3  # Upload is 30% of total progress
-                    self.progress_bar.setValue(int(upload_progress * 100))
-                    self.status_label.setText(f"Uploading... {int(upload_progress * 100)}%")
-            
-            # Complete the upload
-            self.status_label.setText("Completing upload...")
-            complete_response = requests.post(f"{server_url}/v1/uploads/{upload_id}/complete", json={}, timeout=30)
-            complete_response.raise_for_status()
-            
-            self.info_text.append(f"Volume uploaded successfully: {upload_id}")
-            return upload_id
-            
-        except Exception as e:
-            self.info_text.append(f"Upload failed: {str(e)}")
-            return None
+    def on_worker_upload_progress(self, progress_percent: int, status_message: str):
+        """Handle upload progress updates from worker."""
+        self.progress_bar.setValue(progress_percent)
+        self.status_label.setText(status_message)
+        self.status_label.setStyleSheet("color: blue;")
     
-    def create_inference_job(self, upload_id):
-        """Create an inference job with the uploaded volume."""
+    def on_worker_job_created(self, job_id: str):
+        """Handle job creation notification from worker."""
+        self.current_job_id = job_id
+        self.info_text.append(f"Created inference job: {job_id}")
+        
+        # Connect to job via WebSocket
         try:
-            server_url = self.server_url_input.text()
-            
-            # Get inference parameters from UI
-            job_params = {
-                "volume_shape": list(self.current_volume.shape),
-                "volume_dtype": str(self.current_volume.dtype),
-                "has_volume": True,
-                "params": {
-                    "upload_id": upload_id,
-                    "patch_size": self.patch_size_input.value(),
-                    "overlap_percent": self.overlap_input.value(),
-                    "use_tta": self.use_tta_checkbox.isChecked(),
-                    "dummy_inference": False  # Use real nnU-Net
-                }
-            }
-            
-            # Create job
-            response = requests.post(f"{server_url}/v1/jobs", json=job_params, timeout=10)
-            response.raise_for_status()
-            
-            job_data = response.json()
-            job_id = job_data.get("job_id")
-            self.current_job_id = job_id
-            
-            self.info_text.append(f"Created inference job: {job_id}")
-            return job_id
-            
-        except Exception as e:
-            self.info_text.append(f"Failed to create job: {str(e)}")
-            return None
-    
-    def connect_to_inference_job(self, job_id):
-        """Connect to the inference job via WebSocket."""
-        try:
-            # Update WebSocket client URL
             ws_url = self.server_url_input.text().replace("http://", "ws://").replace("https://", "wss://")
             self.websocket_client.server_url = ws_url
-            
-            # Connect to job
             asyncio.run_coroutine_threadsafe(
                 self.websocket_client.connect_to_job(job_id),
                 self.websocket_worker.loop
             )
-            
         except Exception as e:
-            self.info_text.append(f"Failed to connect to job: {str(e)}")
-            raise
+            self.info_text.append(f"Failed to connect to job WebSocket: {str(e)}")
     
-    def start_inference_processing(self, job_id):
-        """Start the actual inference processing.
-        If the request times out, assume start succeeded and rely on WebSocket/polling.
-        """
-        try:
-            server_url = self.server_url_input.text()
-            
-            self.info_text.append("Starting inference...")
-            try:
-                response = requests.put(
-                    f"{server_url}/v1/jobs/{job_id}",
-                    json={
-                        "start_inference": True,
-                        "dummy_inference": False
-                    },
-                    timeout=5,  # keep UI responsive; server should respond immediately
-                )
-                response.raise_for_status()
-                self.info_text.append(f"Started inference for job {job_id}")
-            except requests.exceptions.Timeout:
-                # Treat as non-fatal: server may still have started the job
-                self.info_text.append("Start request timed out; assuming started. Monitoring via WebSocket...")
-            except requests.exceptions.ConnectionError as e:
-                self.info_text.append(f"Connection error when starting inference: {str(e)}")
-                raise
-        except Exception as e:
-            self.info_text.append(f"Failed to start inference: {str(e)}")
-            raise
+    def on_worker_inference_started(self, job_id: str):
+        """Handle inference start notification from worker."""
+        self.info_text.append(f"Started inference for job {job_id}")
+        self.status_label.setText("Inference running...")
+        self.status_label.setStyleSheet("color: blue;")
+        
+        # Start polling worker as fallback (non-blocking)
+        self._overlay_done = False
+        self._start_polling(job_id)
+    
+    def on_worker_error(self, error_message: str):
+        """Handle error from worker."""
+        self.info_text.append(f"Error: {error_message}")
+        self.status_label.setText("Inference failed")
+        self.status_label.setStyleSheet("color: red;")
+        
+        # Reset UI state
+        self.is_inference_running = False
+        self.run_inference_button.setEnabled(True)
+        self.cancel_inference_button.setEnabled(False)
+        self.progress_bar.setVisible(False)
+    
+    def on_worker_finished(self):
+        """Handle worker completion."""
+        self.info_text.append("Inference workflow completed, monitoring progress...")
+        # Don't reset UI yet - wait for job completion via WebSocket/polling
     
     def cancel_inference(self):
         """Cancel the current inference job."""
+        # Stop the worker threads if they're running
+        if self.inference_worker and self.inference_worker.isRunning():
+            self.inference_worker.stop()
+            self.inference_worker.wait(3000)  # Wait up to 3 seconds
+        
+        # Stop the polling worker
+        self._stop_polling()
+        
         if not self.current_job_id:
+            # Reset UI even if no job ID
+            self.is_inference_running = False
+            self.run_inference_button.setEnabled(True)
+            self.cancel_inference_button.setEnabled(False)
+            self.progress_bar.setVisible(False)
+            self.status_label.setText("Cancelled")
+            self.status_label.setStyleSheet("color: orange;")
             return
         
         try:
@@ -698,6 +867,14 @@ Std Dev: {metadata['std_intensity']:.2f}"""
     
     def closeEvent(self, event):
         """Handle widget close event."""
+        # Clean up inference worker
+        if self.inference_worker and self.inference_worker.isRunning():
+            self.inference_worker.stop()
+            self.inference_worker.wait(5000)  # Wait up to 5 seconds
+        
+        # Clean up polling worker
+        self._stop_polling()
+        
         # Clean up WebSocket connections
         if self.websocket_worker.isRunning():
             self.websocket_worker.stop()
@@ -705,26 +882,39 @@ Std Dev: {metadata['std_intensity']:.2f}"""
         
         event.accept()
 
-    def _poll_job_status(self):
-        """Fallback polling to fetch job status and artifacts if WS is missed."""
+    def _start_polling(self, job_id: str):
+        """Start background polling worker for job status."""
+        # Stop any existing polling worker
+        self._stop_polling()
+        
+        # Create and start new polling worker
+        server_url = self.server_url_input.text()
+        self.polling_worker = PollingWorker(server_url, job_id, poll_interval=2.0)
+        self.polling_worker.status_updated.connect(self._on_poll_status_update)
+        self.polling_worker.start()
+        self.info_text.append("Started background status polling (non-blocking)")
+    
+    def _stop_polling(self):
+        """Stop the background polling worker."""
+        if self.polling_worker and self.polling_worker.isRunning():
+            self.polling_worker.stop()
+            self.polling_worker.wait(3000)  # Wait up to 3 seconds
+            self.polling_worker = None
+    
+    def _on_poll_status_update(self, data: dict):
+        """Handle status update from polling worker (runs on main thread via signal)."""
         try:
-            if not self.current_job_id:
-                return
-            server_url = self.server_url_input.text()
-            r = requests.get(f"{server_url}/v1/jobs/{self.current_job_id}", timeout=5)
-            if r.status_code != 200:
-                return
-            data = r.json()
             # Update progress
             progress = float(data.get("progress", 0.0) or 0.0)
             if self.progress_bar.isVisible():
                 self.progress_bar.setValue(int(progress * 100))
             self.status_label.setText(f"Inference progress: {int(progress * 100)}%")
+            
             # If completed and not yet overlaid, download
             state = data.get("state")
             if state == "completed" and not self._overlay_done:
                 self.download_and_overlay_results(self.current_job_id)
-                self._job_poll_timer.stop()
-        except Exception:
+                self._stop_polling()
+        except Exception as e:
             # Silent fallback; WS remains primary
             pass

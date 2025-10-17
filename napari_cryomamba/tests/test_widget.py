@@ -4,9 +4,9 @@ Tests for CryoMamba napari plugin.
 
 import pytest
 import numpy as np
-from unittest.mock import Mock, patch
+from unittest.mock import Mock, patch, MagicMock
 from qtpy.QtWidgets import QApplication
-from napari_cryomamba.widget import CryoMambaWidget
+from napari_cryomamba.widget import CryoMambaWidget, InferenceWorker
 
 
 class TestCryoMambaWidget:
@@ -112,6 +112,81 @@ class TestCryoMambaWidget:
         assert mock_viewer.dims.ndisplay == 2
         assert mock_layer.rendering == 'translucent'
         assert widget.toggle_3d_button.text() == "Switch to 3D"
+    
+    def test_async_inference_workflow(self):
+        """Test that inference uses async worker thread instead of blocking."""
+        from qtpy.QtWidgets import QApplication
+        
+        mock_viewer = Mock()
+        widget = CryoMambaWidget(mock_viewer)
+        
+        # Set up test data
+        widget.current_volume = np.random.rand(10, 10, 10).astype(np.float32)
+        widget.current_volume_path = "/tmp/test.mrc"
+        widget.server_url_input.setText("http://localhost:8000")
+        
+        # Create a mock worker with proper signal support
+        mock_worker = MagicMock()
+        
+        # Mock the signals - MagicMock will handle .connect() calls
+        mock_worker.upload_progress.connect = Mock()
+        mock_worker.job_created.connect = Mock()
+        mock_worker.inference_started.connect = Mock()
+        mock_worker.error_occurred.connect = Mock()
+        mock_worker.finished.connect = Mock()
+        mock_worker.start = Mock()
+        
+        # Patch InferenceWorker to return our mock
+        with patch('napari_cryomamba.widget.InferenceWorker', return_value=mock_worker):
+            # Trigger inference
+            widget.run_inference()
+            
+            # Process Qt events to update UI
+            QApplication.processEvents()
+            
+            # Verify worker was assigned - THIS IS THE KEY TEST
+            # The worker thread handles the blocking operations
+            assert widget.inference_worker is mock_worker
+            
+            # Verify worker was started in a separate thread
+            mock_worker.start.assert_called_once()
+            
+            # Verify all signals were connected so UI stays responsive
+            mock_worker.upload_progress.connect.assert_called_once()
+            mock_worker.job_created.connect.assert_called_once()
+            mock_worker.inference_started.connect.assert_called_once()
+            mock_worker.error_occurred.connect.assert_called_once()
+            mock_worker.finished.connect.assert_called_once()
+            
+            # Verify UI state changes indicating async operation started
+            assert widget.is_inference_running
+            assert not widget.run_inference_button.isEnabled()
+            assert widget.cancel_inference_button.isEnabled()
+            # Note: progress_bar.isVisible() may be False in test environment
+            # without a real window, but the important thing is the worker thread is used
+    
+    def test_worker_signal_handlers(self):
+        """Test that worker signal handlers update UI correctly."""
+        mock_viewer = Mock()
+        widget = CryoMambaWidget(mock_viewer)
+        widget.websocket_worker.loop = Mock()  # Mock asyncio loop
+        
+        # Test upload progress handler
+        widget.on_worker_upload_progress(50, "Uploading... 50%")
+        assert widget.progress_bar.value() == 50
+        assert "Uploading" in widget.status_label.text()
+        
+        # Test job created handler
+        with patch('asyncio.run_coroutine_threadsafe'):
+            widget.on_worker_job_created("test-job-123")
+            assert widget.current_job_id == "test-job-123"
+        
+        # Test error handler
+        widget.on_worker_error("Test error")
+        assert not widget.is_inference_running
+        assert widget.run_inference_button.isEnabled()
+        assert not widget.cancel_inference_button.isEnabled()
+        assert not widget.progress_bar.isVisible()
 
 
 if __name__ == "__main__":

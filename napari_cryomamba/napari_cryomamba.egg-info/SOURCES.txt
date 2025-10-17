@@ -1,6 +1,7 @@
 README.md
 pyproject.toml
 napari_cryomamba/__init__.py
+napari_cryomamba/websocket_client.py
 napari_cryomamba/widget.py
 napari_cryomamba.egg-info/PKG-INFO
 napari_cryomamba.egg-info/SOURCES.txt
