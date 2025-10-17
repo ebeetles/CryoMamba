@@ -128,6 +128,39 @@ class InMemoryOrchestrator:
         
         return memory_mb + model_overhead_mb
 
+    def _process_progress_queue(self):
+        """Process progress updates from the queue in a separate thread."""
+        import asyncio
+        import queue
+        
+        # Create a new event loop for this thread
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        
+        try:
+            while True:
+                try:
+                    # Get progress update from queue (blocking with timeout)
+                    job_id, progress = self._progress_queue.get(timeout=1.0)
+                    
+                    # Schedule the broadcast on this thread's event loop
+                    loop.run_until_complete(
+                        broadcast_job_update(job_id, "progress", {"progress": progress})
+                    )
+                    
+                    logger.info(f"Processed progress update for job {job_id}: {progress}")
+                    
+                except queue.Empty:
+                    # Timeout - continue loop
+                    continue
+                except Exception as e:
+                    logger.error(f"Error processing progress update: {e}")
+                    
+        except Exception as e:
+            logger.error(f"Progress queue processing thread error: {e}")
+        finally:
+            loop.close()
+
     async def _resolve_device(self, device_override: Optional[str], job: JobRecord) -> str:
         """Resolve the best available device for a job"""
         availability_manager = get_gpu_availability_manager()
@@ -268,8 +301,8 @@ class InMemoryOrchestrator:
 
                 def _on_progress(p: float):
                     job.progress = min(max(p, 0.0), 0.99)
-                    # Fire-and-forget; no await inside external callback
-                    asyncio.create_task(broadcast_job_update(job.job_id, "progress", {"progress": job.progress}))
+                    # Store progress for async broadcasting
+                    job._last_progress_update = job.progress
                 
                 def _on_preview(mask: np.ndarray):
                     # Fire-and-forget preview update
@@ -306,12 +339,37 @@ class InMemoryOrchestrator:
                         if status_str != "ready":
                             raise NnUNetNotAvailableError(f"nnU-Net not ready: {status_str}")
                         
-                        # Run real inference using direct network access
-                        pred = wrapper.predict_numpy(
-                            volume, 
-                            progress_callback=_on_progress,
-                            preview_callback=_on_preview
-                        )
+                        # Run real inference using direct network access in thread pool
+                        # This prevents blocking the async event loop
+                        import concurrent.futures
+                        
+                        def run_inference():
+                            return wrapper.predict_numpy(
+                                volume, 
+                                progress_callback=_on_progress,
+                                preview_callback=_on_preview
+                            )
+                        
+                        # Run inference in thread pool to avoid blocking
+                        with concurrent.futures.ThreadPoolExecutor() as executor:
+                            future = executor.submit(run_inference)
+                            
+                            # Periodically check progress and broadcast updates
+                            while not future.done():
+                                await asyncio.sleep(0.1)  # Check every 100ms
+                                
+                                # Broadcast progress if it has been updated
+                                if hasattr(job, '_last_progress_update'):
+                                    current_progress = job._last_progress_update
+                                    if current_progress != getattr(job, '_last_broadcasted_progress', -1):
+                                        await broadcast_job_update(job.job_id, "progress", {"progress": current_progress})
+                                        job._last_broadcasted_progress = current_progress
+                            
+                            # Get the result
+                            pred = future.result()
+                        
+                        # Broadcast final progress update
+                        await broadcast_job_update(job.job_id, "progress", {"progress": job.progress})
 
                     # Save artifact
                     artifacts_dir = Path(settings.upload_base_dir) / job.job_id

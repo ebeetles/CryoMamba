@@ -740,6 +740,16 @@ Std Dev: {metadata['std_intensity']:.2f}"""
         try:
             ws_url = self.server_url_input.text().replace("http://", "ws://").replace("https://", "wss://")
             self.websocket_client.server_url = ws_url
+            
+            # Ensure WebSocket worker is running
+            if not self.websocket_worker.isRunning():
+                self.info_text.append("Starting WebSocket worker...")
+                self.websocket_worker.start()
+                # Give it a moment to start
+                import time
+                time.sleep(0.1)
+            
+            # Connect to the job
             asyncio.run_coroutine_threadsafe(
                 self.websocket_client.connect_to_job(job_id),
                 self.websocket_worker.loop
