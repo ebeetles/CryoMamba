@@ -68,6 +68,7 @@ add_error_handling_middleware(app)
 # Include routers
 from app.routes import health, info, jobs, websocket, uploads, gpu
 from app.services.orchestrator import init_orchestrator, shutdown_orchestrator
+from app.services.database import init_database, cleanup_database
 
 app.include_router(health.router, prefix="/v1")
 app.include_router(info.router, prefix="/v1")
@@ -79,12 +80,16 @@ app.include_router(gpu.router, prefix="/v1")
 # Orchestrator lifecycle
 @app.on_event("startup")
 async def _startup():
+    # Initialize database first
+    init_database()
+    # Then initialize orchestrator
     await init_orchestrator()
 
 
 @app.on_event("shutdown")
 async def _shutdown():
     await shutdown_orchestrator()
+    cleanup_database()
 
 @app.get("/")
 async def root():

@@ -9,6 +9,7 @@ from typing import Optional, Dict, Any
 from pydantic import BaseModel
 from app.routes.websocket import broadcast_job_update, start_fake_preview_streaming
 import app.services.orchestrator as orchestrator_service
+from app.services.database import get_db_service
 
 class JobCreateRequest(BaseModel):
     """Request model for creating a job."""
@@ -20,8 +21,6 @@ class JobCreateRequest(BaseModel):
 logger = logging.getLogger(__name__)
 router = APIRouter()
 
-# In-memory job storage for dummy implementation
-jobs_db = {}
 # Track active preview streaming tasks
 preview_tasks = {}
 # Background task manager
@@ -64,7 +63,10 @@ async def create_job(job_request: JobCreateRequest = None):
         updated_at=now
     )
     
-    jobs_db[job_id] = job_record
+    # Store job in database
+    db_service = get_db_service()
+    db_service.create_job(job_record)
+    
     # Submit to orchestrator queue
     if orchestrator_service.orchestrator is not None:
         await orchestrator_service.orchestrator.submit(job_record)
@@ -89,17 +91,20 @@ async def create_job(job_request: JobCreateRequest = None):
 async def get_job(job_id: str):
     """
     Get job status and details
-    Returns mock job information
     """
     # Prefer live job from orchestrator if available (has up-to-date progress/artifacts)
     job = None
     if orchestrator_service.orchestrator is not None:
         job = orchestrator_service.orchestrator.get(job_id)
+    
     if job is None:
-        # Fallback to local jobs_db (e.g., before orchestrator submission in tests)
-        if job_id not in jobs_db:
+        # Fallback to database
+        db_service = get_db_service()
+        job = db_service.get_job(job_id)
+        
+        if job is None:
             raise HTTPException(status_code=404, detail="Job not found")
-        job = jobs_db[job_id]
+    
     logger.info(f"Retrieved job: {job_id}")
     
     # Map internal 'queued' state to externally expected 'pending'
@@ -120,10 +125,11 @@ async def update_job(job_id: str, job_update: dict):
     """
     Update job parameters to start inference or modify settings
     """
-    if job_id not in jobs_db:
-        raise HTTPException(status_code=404, detail="Job not found")
+    db_service = get_db_service()
+    job = db_service.get_job(job_id)
     
-    job = jobs_db[job_id]
+    if job is None:
+        raise HTTPException(status_code=404, detail="Job not found")
     
     # Check if this is a request to start inference
     if job_update.get("start_inference"):
@@ -145,6 +151,9 @@ async def update_job(job_id: str, job_update: dict):
         # Update job timestamp
         job.updated_at = datetime.now()
         
+        # Save to database
+        db_service.update_job(job)
+        
         # Broadcast job update (fire-and-forget)
         asyncio.create_task(broadcast_job_update(job_id, "job_started", {
             "job_id": job_id,
@@ -164,6 +173,9 @@ async def update_job(job_id: str, job_update: dict):
     job.params.update(job_update)
     job.updated_at = datetime.now()
     
+    # Save to database
+    db_service.update_job(job)
+    
     return {
         "job_id": job_id,
         "status": "updated",
@@ -174,17 +186,19 @@ async def update_job(job_id: str, job_update: dict):
 async def cancel_job(job_id: str):
     """
     Cancel a job
-    For future implementation - currently returns mock response
     """
-    if job_id not in jobs_db:
+    db_service = get_db_service()
+    job = db_service.get_job(job_id)
+    
+    if job is None:
         raise HTTPException(status_code=404, detail="Job not found")
     
-    job = jobs_db[job_id]
     if orchestrator_service.orchestrator is not None:
         await orchestrator_service.orchestrator.cancel(job_id)
     else:
         job.state = JobState.CANCELLED
         job.updated_at = datetime.now()
+        db_service.update_job(job)
     
     # Stop preview streaming if active
     if job_id in preview_tasks:
@@ -226,7 +240,10 @@ async def list_jobs():
                 "updated_at": job.updated_at.isoformat(),
             })
     else:
-        for job in jobs_db.values():
+        # Fallback to database
+        db_service = get_db_service()
+        jobs = db_service.list_jobs()
+        for job in jobs:
             res.append({
                 "job_id": job.job_id,
                 "state": ("pending" if str(job.state) == "queued" else job.state),
@@ -241,10 +258,11 @@ async def download_artifact(job_id: str, artifact_name: str):
     """
     Download a specific artifact from a completed job.
     """
-    if job_id not in jobs_db:
-        raise HTTPException(status_code=404, detail="Job not found")
+    db_service = get_db_service()
+    job = db_service.get_job(job_id)
     
-    job = jobs_db[job_id]
+    if job is None:
+        raise HTTPException(status_code=404, detail="Job not found")
     
     if not job.artifacts or artifact_name not in job.artifacts:
         raise HTTPException(status_code=404, detail=f"Artifact '{artifact_name}' not found")

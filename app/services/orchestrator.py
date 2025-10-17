@@ -12,6 +12,7 @@ from app.services.gpu_monitor import get_gpu_monitor
 from app.services.gpu_scheduler import get_gpu_scheduler, JobPriority
 from app.services.gpu_memory_manager import get_gpu_memory_manager
 from app.services.gpu_error_handler import get_gpu_error_handler, get_gpu_availability_manager, GPUError, GPUErrorType
+from app.services.database import get_db_service
 import numpy as np
 from pathlib import Path
 import os
@@ -53,6 +54,10 @@ class JobStateMachine:
             if job.started_at:
                 job.duration_ms = int((now - job.started_at).total_seconds() * 1000)
         job.updated_at = now
+        
+        # Persist to database
+        db_service = get_db_service()
+        db_service.update_job(job)
 
 
 class InMemoryOrchestrator:
@@ -190,15 +195,34 @@ class InMemoryOrchestrator:
         return settings.nnunet_device or "cpu"
 
     def get(self, job_id: str) -> Optional[JobRecord]:
-        return self.jobs.get(job_id)
+        # First check if job is currently being processed (in memory)
+        if job_id in self.jobs:
+            return self.jobs.get(job_id)
+        
+        # Fallback to database
+        db_service = get_db_service()
+        return db_service.get_job(job_id)
 
     def list(self):
-        return list(self.jobs.values())
+        # Return jobs from both memory and database
+        memory_jobs = list(self.jobs.values())
+        db_service = get_db_service()
+        db_jobs = db_service.list_jobs()
+        
+        # Combine and deduplicate (memory jobs take precedence)
+        memory_job_ids = {job.job_id for job in memory_jobs}
+        all_jobs = memory_jobs + [job for job in db_jobs if job.job_id not in memory_job_ids]
+        
+        return all_jobs
 
     async def cancel(self, job_id: str) -> bool:
+        # Get job from memory or database
         job = self.jobs.get(job_id)
         if not job:
-            return False
+            db_service = get_db_service()
+            job = db_service.get_job(job_id)
+            if not job:
+                return False
             
         # Try GPU scheduler first
         gpu_scheduler = get_gpu_scheduler()
