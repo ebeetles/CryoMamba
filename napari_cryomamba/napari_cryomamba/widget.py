@@ -69,7 +69,6 @@ class InferenceWorker(QThread):
     """Worker thread for running inference operations without blocking UI."""
     
     # Signals for communicating with main thread
-    upload_progress = Signal(int, str)  # progress_percent, status_message
     job_created = Signal(str)  # job_id
     inference_started = Signal(str)  # job_id
     error_occurred = Signal(str)  # error_message
@@ -98,7 +97,6 @@ class InferenceWorker(QThread):
             # Step 1: Upload volume
             if self._should_stop:
                 return
-            self.upload_progress.emit(0, "Starting upload...")
             upload_id = self._upload_volume()
             if not upload_id:
                 self.error_occurred.emit("Failed to upload volume")
@@ -108,7 +106,6 @@ class InferenceWorker(QThread):
             # Step 2: Create job
             if self._should_stop:
                 return
-            self.upload_progress.emit(35, "Creating inference job...")
             job_id = self._create_inference_job(upload_id)
             if not job_id:
                 self.error_occurred.emit("Failed to create inference job")
@@ -119,7 +116,6 @@ class InferenceWorker(QThread):
             # Step 3: Start inference (server will handle async execution)
             if self._should_stop:
                 return
-            self.upload_progress.emit(40, "Starting inference...")
             if not self._start_inference(job_id):
                 self.error_occurred.emit("Failed to start inference")
                 return
@@ -163,15 +159,10 @@ class InferenceWorker(QThread):
                         timeout=30
                     )
                     upload_response.raise_for_status()
-                    
-                    # Update progress (upload is 30% of total workflow)
-                    upload_progress = int((chunk_idx + 1) / total_chunks * 30)
-                    self.upload_progress.emit(upload_progress, f"Uploading... {upload_progress}%")
             
             # Complete the upload
             if self._should_stop:
                 return None
-            self.upload_progress.emit(30, "Completing upload...")
             complete_response = requests.post(
                 f"{self.server_url}/v1/uploads/{upload_id}/complete", 
                 json={}, 
@@ -282,6 +273,24 @@ class CryoMambaWidget(QWidget):
         
         self.open_button = QPushButton("Open .mrc File")
         self.open_button.clicked.connect(self.open_mrc_file)
+        self.open_button.setStyleSheet("""
+            QPushButton { 
+                background-color: #e3f2fd; 
+                color: #1976d2; 
+                border: 1px solid #bbdefb;
+                border-radius: 3px;
+                padding: 6px 12px;
+                font-weight: normal;
+            }
+            QPushButton:hover { 
+                background-color: #bbdefb; 
+                border-color: #90caf9;
+            }
+            QPushButton:pressed { 
+                background-color: #90caf9; 
+                border-color: #64b5f6;
+            }
+        """)
         file_layout.addWidget(self.open_button)
         
         file_group.setLayout(file_layout)
@@ -300,6 +309,23 @@ class CryoMambaWidget(QWidget):
         # Server status check button
         self.check_server_button = QPushButton("Check Server")
         self.check_server_button.clicked.connect(self.check_server_connection)
+        self.check_server_button.setStyleSheet("""
+            QPushButton { 
+                background-color: #f3e5f5; 
+                color: #7b1fa2; 
+                border: 1px solid #e1bee7;
+                border-radius: 3px;
+                padding: 6px 12px;
+            }
+            QPushButton:hover { 
+                background-color: #e1bee7; 
+                border-color: #ce93d8;
+            }
+            QPushButton:pressed { 
+                background-color: #ce93d8; 
+                border-color: #ba68c8;
+            }
+        """)
         server_url_layout.addWidget(self.check_server_button)
         
         server_layout.addLayout(server_url_layout)
@@ -349,17 +375,54 @@ class CryoMambaWidget(QWidget):
         action_layout = QVBoxLayout()
         
         # Main inference button
-        self.run_inference_button = QPushButton("Upload & Run Inference")
+        self.run_inference_button = QPushButton("Run Inference")
         self.run_inference_button.clicked.connect(self.run_inference)
         self.run_inference_button.setEnabled(False)
-        self.run_inference_button.setStyleSheet("QPushButton { background-color: #4CAF50; color: white; font-weight: bold; padding: 8px; }")
+        self.run_inference_button.setStyleSheet("""
+            QPushButton { 
+                background-color: #4CAF50; 
+                color: white; 
+                border: none;
+                border-radius: 3px;
+                padding: 8px 16px;
+                font-weight: bold;
+            }
+            QPushButton:hover { 
+                background-color: #45a049; 
+            }
+            QPushButton:pressed { 
+                background-color: #3d8b40; 
+            }
+            QPushButton:disabled { 
+                background-color: #cccccc; 
+                color: #666666; 
+            }
+        """)
         action_layout.addWidget(self.run_inference_button)
         
         # Cancel button
         self.cancel_inference_button = QPushButton("Cancel Inference")
         self.cancel_inference_button.clicked.connect(self.cancel_inference)
         self.cancel_inference_button.setEnabled(False)
-        self.cancel_inference_button.setStyleSheet("QPushButton { background-color: #f44336; color: white; }")
+        self.cancel_inference_button.setStyleSheet("""
+            QPushButton { 
+                background-color: #f44336; 
+                color: white; 
+                border: none;
+                border-radius: 3px;
+                padding: 8px 16px;
+            }
+            QPushButton:hover { 
+                background-color: #da190b; 
+            }
+            QPushButton:pressed { 
+                background-color: #c1170a; 
+            }
+            QPushButton:disabled { 
+                background-color: #cccccc; 
+                color: #666666; 
+            }
+        """)
         action_layout.addWidget(self.cancel_inference_button)
         
         # Progress bar
@@ -394,11 +457,53 @@ class CryoMambaWidget(QWidget):
         self.toggle_3d_button = QPushButton("Switch to 3D")
         self.toggle_3d_button.clicked.connect(self.toggle_3d_view)
         self.toggle_3d_button.setEnabled(False)
+        self.toggle_3d_button.setStyleSheet("""
+            QPushButton { 
+                background-color: #e8f5e8; 
+                color: #2e7d32; 
+                border: 1px solid #c8e6c9;
+                border-radius: 3px;
+                padding: 6px 12px;
+            }
+            QPushButton:hover { 
+                background-color: #c8e6c9; 
+                border-color: #a5d6a7;
+            }
+            QPushButton:pressed { 
+                background-color: #a5d6a7; 
+                border-color: #81c784;
+            }
+            QPushButton:disabled { 
+                background-color: #cccccc; 
+                color: #666666; 
+            }
+        """)
         viz_layout.addWidget(self.toggle_3d_button)
         
         self.clear_button = QPushButton("Clear Volume")
         self.clear_button.clicked.connect(self.clear_volume)
         self.clear_button.setEnabled(False)
+        self.clear_button.setStyleSheet("""
+            QPushButton { 
+                background-color: #fff3e0; 
+                color: #ef6c00; 
+                border: 1px solid #ffcc02;
+                border-radius: 3px;
+                padding: 6px 12px;
+            }
+            QPushButton:hover { 
+                background-color: #ffcc02; 
+                border-color: #ffb300;
+            }
+            QPushButton:pressed { 
+                background-color: #ffb300; 
+                border-color: #ff9800;
+            }
+            QPushButton:disabled { 
+                background-color: #cccccc; 
+                color: #666666; 
+            }
+        """)
         viz_layout.addWidget(self.clear_button)
         
         viz_group.setLayout(viz_layout)
@@ -702,7 +807,6 @@ Std Dev: {metadata['std_intensity']:.2f}"""
             
             # Connect worker signals
             self.info_text.append("Connecting signals...")
-            self.inference_worker.upload_progress.connect(self.on_worker_upload_progress)
             self.inference_worker.job_created.connect(self.on_worker_job_created)
             self.inference_worker.inference_started.connect(self.on_worker_inference_started)
             self.inference_worker.error_occurred.connect(self.on_worker_error)
@@ -725,11 +829,6 @@ Std Dev: {metadata['std_intensity']:.2f}"""
             self.cancel_inference_button.setEnabled(False)
             self.progress_bar.setVisible(False)
     
-    def on_worker_upload_progress(self, progress_percent: int, status_message: str):
-        """Handle upload progress updates from worker."""
-        self.progress_bar.setValue(progress_percent)
-        self.status_label.setText(status_message)
-        self.status_label.setStyleSheet("color: blue;")
     
     def on_worker_job_created(self, job_id: str):
         """Handle job creation notification from worker."""
