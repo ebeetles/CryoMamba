@@ -26,8 +26,8 @@ Complete guide for using CryoMamba to segment cryo-electron tomography volumes.
 
 Before using CryoMamba, ensure you have:
 
-1. **Access to GPU Server**: Server URL and authentication token
-2. **Desktop Application Installed**: CryoMamba.app or Python environment
+1. **Access to GPU Server**: Server URL and authentication token (server needs NVIDIA GPU, not your desktop)
+2. **Desktop Application Installed**: CryoMamba.app or Python environment (no GPU required for client)
 3. **Sample Data**: .mrc format cryo-ET volumes
 4. **Network Connection**: Stable connection to GPU server
 

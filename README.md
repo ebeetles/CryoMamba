@@ -16,8 +16,8 @@ CryoMamba provides:
 ### First Run Tutorial (< 10 minutes)
 
 #### Prerequisites
-- **GPU Server**: NVIDIA GPU with ≥24 GB VRAM, 64 GB RAM, 1 TB NVMe storage
-- **Desktop Client**: macOS (Ventura 13+ recommended), 16 GB RAM minimum
+- **GPU Server**: NVIDIA GPU with ≥24 GB VRAM, 64 GB RAM, 1 TB NVMe storage (runs inference)
+- **Desktop Client**: macOS (Ventura 13+ recommended), 16 GB RAM minimum - **No GPU required**
 - **Network**: HTTPS connection between client and server
 
 #### Step 1: Start the GPU Server (2 minutes)
@@ -89,6 +89,8 @@ python main.py
 
 ### Desktop Client
 
+**Note**: Desktop client does NOT require a GPU - visualization runs on CPU only.
+
 | Component | Minimum | Recommended |
 |-----------|---------|-------------|
 | OS | macOS 12 (Monterey) | macOS 13+ (Ventura/Sonoma) |
@@ -96,6 +98,7 @@ python main.py
 | Storage | 100 GB free | 500 GB free |
 | Display | 1920×1080 | 2560×1440+ (Retina) |
 | Python | 3.8+ | 3.10 |
+| GPU | **Not required** | Integrated graphics sufficient |
 
 ---
 
@@ -559,9 +562,9 @@ If you use CryoMamba in your research, please cite:
 ```bibtex
 @software{cryomamba,
   title = {CryoMamba: Interactive Cryo-ET Segmentation System},
-  author = {Your Name},
+  author = {Elwin Li},
   year = {2025},
-  url = {https://github.com/your-org/CryoMamba}
+  url = {https://github.com/ebeetles/CryoMamba}
 }
 ```
 
