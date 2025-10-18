@@ -110,6 +110,369 @@ Expected output:
 
 ## Installation Issues
 
+### Issue: pip install -e fails with "setup.py not found"
+
+**Symptoms**:
+```
+ERROR: File "setup.py" not found. Directory cannot be installed in editable mode: /Users/admin/projects/CryoMamba/napari_cryomamba
+(A "pyproject.toml" file was found, but editable mode currently requires a setup.py based build.)
+```
+
+**Solutions**:
+
+1. **Use regular install instead (recommended)**:
+   ```bash
+   pip install .
+   ```
+
+2. **Upgrade pip and try editable install**:
+   ```bash
+   pip install --upgrade pip
+   pip install -e .
+   ```
+
+3. **Check pip version**:
+   ```bash
+   pip --version  # Should be >= 21.3 for pyproject.toml editable installs
+   ```
+
+**Explanation**: The package uses `pyproject.toml` instead of `setup.py`. Older pip versions don't support editable installs with pyproject.toml. Regular install (`pip install .`) works fine for most users.
+
+---
+
+### Issue: pip install fails with license error
+
+**Symptoms**:
+```
+ERROR: Invalid value for license field
+```
+
+**Solutions**:
+
+1. **Update setuptools**:
+   ```bash
+   pip install --upgrade setuptools wheel
+   pip install .
+   ```
+
+2. **Use editable install workaround**:
+   ```bash
+   pip install -e . --no-build-isolation
+   ```
+
+**Explanation**: The license field format in pyproject.toml has changed in newer setuptools versions. Upgrading setuptools usually fixes this.
+
+---
+
+### Issue: "No module named 'websockets'" error
+
+**Symptoms**:
+```
+Error importing required modules: No module named 'websockets'
+Please ensure all dependencies are installed.
+```
+
+**Solutions**:
+
+1. **Install missing dependencies**:
+   ```bash
+   pip install websockets>=10.0
+   ```
+
+2. **Reinstall all desktop client dependencies**:
+   ```bash
+   pip install -r napari_cryomamba/requirements.txt
+   ```
+
+3. **Check for other missing dependencies**:
+   ```bash
+   pip install nibabel pynrrd Pillow requests
+   ```
+
+**Explanation**: The desktop client requires additional dependencies for WebSocket communication and export functionality that weren't included in the original requirements.
+
+---
+
+### Issue: Inference fails with "Model not found" error
+
+**Symptoms**:
+```
+ERROR: Model directory not found
+ERROR: No pretrained weights available
+```
+
+**Solutions**:
+
+1. **Check pretrained weights path**:
+   ```bash
+   # Verify weights directory exists
+   ls -la /path/to/pretrained_weights/
+   
+   # Should contain:
+   # - dataset.json
+   # - plans.json
+   # - fold_all/checkpoint_best.pth
+   ```
+
+2. **Set correct path**:
+   ```bash
+   export NNUNET_MODEL_DIR="/path/to/pretrained_weights"
+   ```
+
+3. **Download pretrained weights**:
+   ```bash
+   # Create directory
+   mkdir -p pretrained_weights
+   
+   # Download weights (contact CryoMamba team for access)
+   # or train your own using nnU-Net v2
+   ```
+
+**Explanation**: CryoMamba requires pretrained nnU-Net weights (~500MB) which are not included in the repository. Users must obtain these separately.
+
+---
+
+### Issue: nnU-Net installation fails
+
+**Symptoms**:
+```
+ERROR: preparing metadata (pyproject.toml) did not run successfully
+ERROR: Failed to build wheel for nnunetv2
+ERROR: Could not find a version that satisfies the requirement batchgeneratorsv2>=0.3.0
+```
+
+**Solutions**:
+
+1. **Follow the complete installation guide** (RECOMMENDED):
+   ```bash
+   # Install batchgeneratorsv2 first
+   git clone https://github.com/MIC-DKFZ/batchgeneratorsv2.git
+   cd batchgeneratorsv2
+   pip install -e .
+   cd ..
+   
+   # Then install nnU-Net from source
+   git clone https://github.com/MIC-DKFZ/nnUNet.git
+   cd nnUNet
+   pip install -e .
+   ```
+
+2. **Use conda instead**:
+   ```bash
+   conda install -c conda-forge batchgeneratorsv2 nnunetv2
+   ```
+
+3. **Install with pip (may fail)**:
+   ```bash
+   pip install --upgrade pip setuptools wheel
+   pip install batchgeneratorsv2
+   pip install nnunetv2
+   ```
+
+**Explanation**: nnU-Net v2 requires batchgeneratorsv2 (not batchgenerators) and has complex build dependencies. Installing from source is the most reliable method.
+
+---
+
+### Issue: "ModuleNotFoundError: No module named 'skbuild'" when installing nnU-Net
+
+**Symptoms**:
+```
+ModuleNotFoundError: No module named 'skbuild'
+```
+
+**Solutions**:
+
+1. **Install scikit-build first**:
+   ```bash
+   pip install scikit-build
+   pip install nnunetv2
+   ```
+
+2. **Install with build dependencies**:
+   ```bash
+   pip install scikit-build cmake ninja
+   pip install nnunetv2
+   ```
+
+3. **Use conda for better dependency management**:
+   ```bash
+   conda install -c conda-forge scikit-build cmake
+   pip install nnunetv2
+   ```
+
+**Explanation**: nnU-Net v2 requires scikit-build (skbuild) for compilation. This is a common missing dependency.
+
+---
+
+### Issue: "CMake configuration failed" when installing nnU-Net
+
+**Symptoms**:
+```
+scikit_build_core.errors.FailedLiveProcessError: CMake configuration failed
+```
+
+**Solutions**:
+
+1. **Install CMake and build tools**:
+   ```bash
+   # macOS
+   brew install cmake
+   
+   # Ubuntu/Debian
+   sudo apt-get install cmake build-essential
+   
+   # Then retry
+   pip install nnunetv2
+   ```
+
+2. **Use conda for better dependency management**:
+   ```bash
+   conda install -c conda-forge cmake ninja
+   pip install nnunetv2
+   ```
+
+3. **Install from source with explicit CMake**:
+   ```bash
+   git clone https://github.com/MIC-DKFZ/nnUNet.git
+   cd nnUNet
+   pip install -e . --config-settings cmake.args="-DCMAKE_BUILD_TYPE=Release"
+   ```
+
+4. **Skip problematic components**:
+   ```bash
+   pip install nnunetv2 --config-settings cmake.args="-DNNUNET_SKIP_COMPILE=ON"
+   ```
+
+5. **Use pre-compiled wheels** (if available):
+   ```bash
+   pip install nnunetv2 --only-binary=all
+   ```
+
+**Explanation**: nnU-Net v2 requires CMake for compiling C++ extensions. Missing CMake or incompatible versions cause this error.
+
+---
+
+### Issue: nnU-Net v2 installation consistently fails
+
+**Symptoms**:
+```
+CMake configuration failed
+Build failed
+Installation fails repeatedly
+```
+
+**Solutions**:
+
+1. **Install from source (RECOMMENDED)**:
+   ```bash
+   # This creates a separate nnUNet folder alongside CryoMamba
+   git clone https://github.com/MIC-DKFZ/nnUNet.git
+   cd nnUNet
+   pip install -e .
+   cd ..  # Return to CryoMamba directory
+   ```
+
+2. **Use conda (if available)**:
+   ```bash
+   conda install -c conda-forge nnunetv2
+   ```
+
+3. **Skip nnU-Net for now**:
+   ```bash
+   # Install everything else
+   pip install -r requirements.txt
+   
+   # Test server without nnU-Net
+   python -m app.main
+   # Server will start but inference will be disabled
+   ```
+
+4. **Use Docker**:
+   ```bash
+   # If you have Docker, use the official nnU-Net image
+   docker pull micdkfz/nnunet:latest
+   ```
+
+**Explanation**: nnU-Net v2 has complex build requirements that can fail on different systems. Installing from source is often more reliable than pip.
+
+---
+
+### Issue: "No matching distribution found for batchgeneratorsv2>=0.3.0"
+
+**Symptoms**:
+```
+ERROR: Could not find a version that satisfies the requirement batchgeneratorsv2>=0.3.0
+ERROR: No matching distribution found for batchgeneratorsv2>=0.3.0
+```
+
+**Solutions**:
+
+1. **Install batchgeneratorsv2 first**:
+   ```bash
+   pip install batchgeneratorsv2>=0.3.0
+   pip install nnunetv2
+   ```
+
+2. **Install from source with dependencies**:
+   ```bash
+   pip install scikit-build batchgeneratorsv2
+   git clone https://github.com/MIC-DKFZ/nnUNet.git
+   cd nnUNet
+   pip install -e .
+   ```
+
+3. **Use conda**:
+   ```bash
+   conda install -c conda-forge batchgeneratorsv2 nnunetv2
+   ```
+
+**Explanation**: nnU-Net v2 requires `batchgeneratorsv2` (version 2), not `batchgenerators` (version 1). This is a common confusion.
+
+---
+
+### Issue: "nnUNet_raw is not defined" and related environment variable errors
+
+**Symptoms**:
+```
+nnUNet_raw is not defined and nnU-Net can only be used on data for which preprocessed files are already present on your system.
+nnUNet_preprocessed is not defined and nnU-Net can not be used for preprocessing or training.
+nnUNet_results is not defined and nnU-Net cannot be used for training or inference.
+```
+
+**Solutions**:
+
+1. **Set up nnU-Net environment variables**:
+   ```bash
+   # Set environment variables (replace paths with your preferred locations)
+   export nnUNet_raw="/path/to/nnUNet_raw"
+   export nnUNet_preprocessed="/path/to/nnUNet_preprocessed"
+   export nnUNet_results="/path/to/nnUNet_results"
+   
+   # Create directories (run from anywhere after setting variables)
+   mkdir -p "$nnUNet_raw" "$nnUNet_preprocessed" "$nnUNet_results"
+   ```
+
+2. **Add to your shell profile** (permanent solution):
+   ```bash
+   # Add to ~/.bashrc or ~/.zshrc
+   echo 'export nnUNet_raw="/path/to/nnUNet_raw"' >> ~/.bashrc
+   echo 'export nnUNet_preprocessed="/path/to/nnUNet_preprocessed"' >> ~/.bashrc
+   echo 'export nnUNet_results="/path/to/nnUNet_results"' >> ~/.bashrc
+   source ~/.bashrc
+   ```
+
+3. **Use absolute paths**:
+   ```bash
+   # Example with absolute paths
+   export nnUNet_raw="/Users/$(whoami)/nnUNet_raw"
+   export nnUNet_preprocessed="/Users/$(whoami)/nnUNet_preprocessed"
+   export nnUNet_results="/Users/$(whoami)/nnUNet_results"
+   ```
+
+**Explanation**: nnU-Net v2 requires these environment variables to define where it stores raw data, preprocessed data, and training results. Without them, nnU-Net cannot function.
+
+---
+
 ### Issue: pip install fails with dependency conflicts
 
 **Symptoms**:

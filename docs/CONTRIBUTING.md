@@ -92,8 +92,11 @@ Branch naming conventions:
 python3 -m venv venv
 source venv/bin/activate  # On Windows: venv\Scripts\activate
 
-# Install dependencies
+# Install server dependencies
 pip install -r requirements.txt
+
+# Install nnU-Net (required for inference)
+pip install nnunetv2
 
 # Install development dependencies
 pip install pytest pytest-cov black isort flake8 mypy
@@ -112,17 +115,27 @@ python dev.py
 ### Desktop Client Development Setup
 
 ```bash
+# Install desktop client dependencies (from project root)
+pip install -r napari_cryomamba/requirements.txt
+
 # Navigate to desktop client directory
 cd napari_cryomamba
 
-# Install in development mode
-pip install -e .
-
-# Install dependencies
-pip install -r requirements.txt
+# Install the package (simple and reliable)
+pip install .
 
 # Run application
 python main.py
+```
+
+**For development (editable install):**
+If you want to edit code and see changes immediately:
+```bash
+# Upgrade pip (required for pyproject.toml editable installs)
+pip install --upgrade pip
+
+# Install in editable mode
+pip install -e .
 ```
 
 ### Pre-commit Hooks (Optional but Recommended)

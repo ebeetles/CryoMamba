@@ -13,50 +13,86 @@ CryoMamba provides:
 
 ## Quick Start
 
-### First Run Tutorial (< 10 minutes)
+Before you install, please make sure you have Python 3.10 or above installed as it's required by nnU-Net.
+Run `python3 --version` to check the version.
+Run `brew install python@3.x` (x >= 10) to install if necessary.
 
-#### Prerequisites
-- **GPU Server**: Python 3.9+, 16 GB RAM minimum (GPU optional but highly recommended for performance)
-- **Desktop Client**: macOS (Ventura 13+ recommended), 16 GB RAM minimum - **No GPU required**
-- **Network**: HTTPS connection between client and server
-
-**Note**: The server can run on **CPU-only** (as you're doing now), but inference will be much slower. For production use with large volumes, an NVIDIA GPU with ≥24 GB VRAM is highly recommended.
-
-#### Step 1: Start the GPU Server (2 minutes)
+Run the following commands:
 
 ```bash
-# Clone and navigate to repository
-git clone <repository-url>
-cd CryoMamba
+# 1. Create a clean virtual environment
+python3 -m venv cryomamba-env
+source cryomamba-env/bin/activate
 
-# Create virtual environment
-python3 -m venv venv
-source venv/bin/activate
+# 2. Upgrade core build tools
+pip install --upgrade pip setuptools wheel
 
-# Install server dependencies
-pip install -r requirements.txt
+#
+# Run steps 3-8 to set up nnU-Net but you may skip them if you already have nnU-Net installed.
+#
 
-# Optional: Set up environment variables (defaults work fine)
-# export NNUNET_MODEL_DIR="/path/to/pretrained_weights"
-# export NNUNET_DEVICE="cpu"  # Use "cuda" if you have GPU
+# 3. Clone batchgeneratorsv2
+git clone https://github.com/MIC-DKFZ/batchgeneratorsv2.git
+cd batchgeneratorsv2
 
-# Start the server
-python -m uvicorn app.main:app --host 0.0.0.0 --port 8000
-```
-
-Server will be available at `http://localhost:8000`. Check health at `http://localhost:8000/v1/healthz`.
-
-#### Step 2: Install Desktop Client (3 minutes)
-
-```bash
-# Navigate to desktop client directory
-cd napari_cryomamba
-
-# Install in development mode
+# 4. Install in editable mode
 pip install -e .
 
-# Install additional dependencies
+# 5. Clone nnU-Net
+cd ..
+git clone https://github.com/MIC-DKFZ/nnUNet.git
+cd nnUNet
+
+# 6. Install in editable mode
+pip install -e .
+
+# 7. Set up nnU-Net environment variables (required for nnU-Net to work) 
+# Add the following to cryomamba-env/bin/activate to ensure environment variables are set every time you activate your virtual environment
+export NNUNET_MODEL_DIR="/path/to/pretrained_weights"
+export NNUNET_DEVICE="cpu"   # Use "cuda" if you have GPU
+export nnUNet_raw="/path/to/nnUNet_raw"
+export nnUNet_preprocessed="/path/to/nnUNet_preprocessed" 
+export nnUNet_results="/path/to/nnUNet_results"
+
+# 8. Create directories
+mkdir -p "$nnUNet_raw" "$nnUNet_preprocessed" "$nnUNet_results"
+cd..
+
+# 9. Clone CryoMamba
+git clone https://github.com/ebeetles/CryoMamba.git
+
+# 10. Install server dependencies
+cd CryoMamba
 pip install -r requirements.txt
+
+# 11. Navigate to client directory and install client dependencies
+cd napari_cryomamba
+(fix licence in pyproject.toml, fix requirement.txt)
+pip install -r requirements.txt
+```
+
+To start the server, open a new terminal and run the following commands:
+
+```bash
+# 1. Activate the virtual environment
+source cryomamba-env/bin/activate 
+
+# 2. Start the server
+cd CryoMamba
+python -m uvicorn app.main:app --host 0.0.0.0 --port 8000    # specify your own host and port
+```
+
+(The server will be available at http://localhost:8000. Check health at http://localhost:8000/v1/healthz.)
+
+To start the client, open a new terminal and run the following commands:
+
+```bash
+# 1. Activate the virtual environment
+source cryomamba-env/bin/activate 
+
+# Launch desktop application
+cd CryoMamba/napari_cryomamba
+python main.py
 ```
 
 #### Step 3: Run Your First Segmentation (5 minutes)
@@ -124,11 +160,19 @@ cd CryoMamba
 python3 -m venv venv
 source venv/bin/activate
 
-# Install dependencies
+# Install dependencies (core dependencies only)
 pip install -r requirements.txt
 
-# Install nnU-Net v2
+# Install nnU-Net v2 (separate step due to build complexity)
 pip install nnunetv2
+
+# Set up nnU-Net environment variables (required for nnU-Net to work)
+export nnUNet_raw="/path/to/nnUNet_raw"
+export nnUNet_preprocessed="/path/to/nnUNet_preprocessed" 
+export nnUNet_results="/path/to/nnUNet_results"
+
+# Create directories (run from anywhere after setting variables)
+mkdir -p "$nnUNet_raw" "$nnUNet_preprocessed" "$nnUNet_results"
 
 # Download pretrained weights
 mkdir -p pretrained_weights
@@ -174,21 +218,80 @@ PYTORCH_CUDA_ALLOC_CONF=max_split_size_mb:512
 
 **Note**: All environment variables are optional - the server will work with sensible defaults!
 
+### Pretrained Weights
+
+**IMPORTANT**: CryoMamba requires pretrained nnU-Net weights for inference. These are **NOT included** in the repository due to size (~500MB).
+
+#### Option 1: Use Pre-trained Weights (Recommended)
+
+Download pre-trained weights for cryo-ET segmentation:
+
+```bash
+# Create directory for weights
+mkdir -p pretrained_weights
+
+# Download pre-trained weights (example - replace with actual source)
+# Contact the CryoMamba team for access to pre-trained weights
+# or train your own using nnU-Net v2
+```
+
+#### Option 2: Train Your Own Model
+
+If you have labeled cryo-ET data:
+
+```bash
+# Install nnU-Net training dependencies
+pip install nnunetv2[training]
+
+# Follow nnU-Net v2 training documentation
+# https://github.com/MIC-DKFZ/nnUNet/blob/master/documentation/training_example.md
+```
+
+#### Option 3: Use Public Datasets
+
+Train on publicly available cryo-ET datasets:
+- **EMPIAR**: https://www.ebi.ac.uk/empiar/
+- **EMDB**: https://www.ebi.ac.uk/emdb/
+
+#### Configuration
+
+Set the path to your pretrained weights:
+
+```bash
+# Set environment variable
+export NNUNET_MODEL_DIR="/path/to/your/pretrained_weights"
+
+# Or update the default path in app/config.py
+```
+
+**Note**: Without pretrained weights, the server will start but inference jobs will fail.
+
 ### Desktop Client Installation
 
 #### Development Installation
 
 ```bash
+# Install desktop client dependencies (from project root)
+pip install -r napari_cryomamba/requirements.txt
+
+# Navigate to desktop client directory
 cd napari_cryomamba
 
-# Install in development mode
-pip install -e .
-
-# Install dependencies
-pip install -r requirements.txt
+# Install the package (simple and reliable)
+pip install .
 
 # Verify installation
 python -c "import napari_cryomamba; print('Installation successful!')"
+```
+
+**For development (editable install):**
+If you want to edit code and see changes immediately:
+```bash
+# Upgrade pip (required for pyproject.toml editable installs)
+pip install --upgrade pip
+
+# Install in editable mode
+pip install -e .
 ```
 
 #### Production Installation (macOS App)
@@ -465,28 +568,6 @@ The diagram above shows the complete data flow from client upload through infere
 - **Long-Running Inference Backend**: nnU-Net wrapper for actual segmentation
 - **File System Storage**: Persistent storage for volumes and results
 
-### System Architecture
-
-```
-┌─────────────────────┐         HTTPS/WSS        ┌──────────────────────┐
-│   Desktop Client    │ ◄─────────────────────► │   GPU Server         │
-│   (napari + Qt)     │                           │   (FastAPI)          │
-│                     │                           │                      │
-│  • Visualization    │                           │  • Upload Manager    │
-│  • Job Orchestration│                           │  • Job Queue         │
-│  • Preview Render   │                           │  • nnU-Net Runner    │
-│  • Export Manager   │                           │  • Preview Streamer  │
-└─────────────────────┘                           │  • Artifact Manager  │
-                                                   └──────────────────────┘
-                                                            │
-                                                            ▼
-                                                   ┌──────────────────┐
-                                                   │   Storage        │
-                                                   │   • Raw uploads  │
-                                                   │   • Artifacts    │
-                                                   │   • Previews     │
-                                                   └──────────────────┘
-```
 
 ### Key Components
 

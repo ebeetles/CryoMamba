@@ -7,7 +7,7 @@ name = "napari-cryomamba"
 description = "CryoMamba napari plugin for cryo-EM volume visualization and analysis"
 readme = "README.md"
 requires-python = ">=3.8"
-license = "MIT"
+license = {text = "MIT"}
 authors = [
     {name = "CryoMamba Team", email = "team@cryomamba.com"},
 ]
@@ -20,6 +20,7 @@ classifiers = [
     "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
     "Topic :: Scientific/Engineering :: Visualization",
+    "License :: OSI Approved :: MIT License",
 ]
 version = "0.1.0"
 
