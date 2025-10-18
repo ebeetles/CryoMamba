@@ -38,11 +38,11 @@ Run this checklist before diving into specific issues:
 # 1. Check server is running
 curl http://localhost:8000/v1/healthz
 
-# 2. Check CUDA availability
+# 2. Check CUDA availability (optional - server works without GPU)
 python -c "import torch; print('CUDA:', torch.cuda.is_available())"
 
-# 3. Check GPU status
-nvidia-smi
+# 3. Check GPU status (if available)
+nvidia-smi  # Skip if running on CPU
 
 # 4. Check disk space
 df -h /data
@@ -57,7 +57,17 @@ python --version  # Should be 3.9+
 python -c "import nnunetv2; print('nnU-Net OK')"
 ```
 
-Expected output:
+Expected output (CPU mode):
+```
+✅ Server health: OK
+✅ CUDA available: False (CPU mode - this is fine!)
+✅ Disk space: 800GB free
+✅ Logs: No errors
+✅ Python: 3.10.x
+✅ nnU-Net: Installed
+```
+
+Expected output (GPU mode):
 ```
 ✅ Server health: OK
 ✅ CUDA available: True

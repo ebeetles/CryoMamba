@@ -16,9 +16,11 @@ CryoMamba provides:
 ### First Run Tutorial (< 10 minutes)
 
 #### Prerequisites
-- **GPU Server**: NVIDIA GPU with ≥24 GB VRAM, 64 GB RAM, 1 TB NVMe storage (runs inference)
+- **GPU Server**: Python 3.9+, 16 GB RAM minimum (GPU optional but highly recommended for performance)
 - **Desktop Client**: macOS (Ventura 13+ recommended), 16 GB RAM minimum - **No GPU required**
 - **Network**: HTTPS connection between client and server
+
+**Note**: The server can run on **CPU-only** (as you're doing now), but inference will be much slower. For production use with large volumes, an NVIDIA GPU with ≥24 GB VRAM is highly recommended.
 
 #### Step 1: Start the GPU Server (2 minutes)
 
@@ -78,14 +80,19 @@ python main.py
 
 ### GPU Inference Server
 
-| Component | Minimum | Recommended |
+| Component | Minimum (CPU-only) | Recommended (GPU) |
 |-----------|---------|-------------|
-| GPU | 24 GB VRAM (NVIDIA) | 48 GB VRAM (A6000/A100) |
-| RAM | 64 GB | 128 GB |
-| Storage | 1 TB NVMe | 2 TB NVMe RAID |
-| OS | Ubuntu 20.04+ | Ubuntu 22.04 LTS |
-| CUDA | 11.8+ | 12.1+ |
+| GPU | **Not required** (can run on CPU) | 24-48 GB VRAM (NVIDIA A6000/A100) |
+| RAM | 16 GB | 64 GB (CPU-only) / 128 GB (GPU) |
+| Storage | 100 GB | 1 TB NVMe (CPU) / 2 TB NVMe RAID (GPU) |
+| OS | Ubuntu 20.04+ / macOS | Ubuntu 22.04 LTS |
+| CUDA | Not required | 11.8+ (for GPU mode) |
 | Python | 3.9+ | 3.10 |
+
+**Performance Notes:**
+- **CPU-only mode**: Works for development/testing but inference is 10-50× slower
+- **GPU mode**: Required for production use with large volumes or time-sensitive work
+- **Your current setup**: Running on CPU (perfectly fine for testing!)
 
 ### Desktop Client
 
