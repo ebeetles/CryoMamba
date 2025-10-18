@@ -5,6 +5,12 @@ Complete guide for using CryoMamba to segment cryo-electron tomography volumes.
 **Version**: 1.0.0  
 **Last Updated**: October 2025
 
+## System Overview
+
+![CryoMamba Flow](CryoMambaFlow.png)
+
+CryoMamba follows the flow shown above: upload your volume → create a segmentation job → monitor progress via real-time previews → download results.
+
 ---
 
 ## Table of Contents

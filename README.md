@@ -454,6 +454,17 @@ python test_build.py
 
 ## Architecture
 
+### System Flow Diagram
+
+![CryoMamba Flow](docs/CryoMambaFlow.png)
+
+The diagram above shows the complete data flow from client upload through inference to result streaming. Key components:
+
+- **Client System**: User application (napari desktop client)
+- **API & Job Management Layer**: REST API, upload handling, job management
+- **Long-Running Inference Backend**: nnU-Net wrapper for actual segmentation
+- **File System Storage**: Persistent storage for volumes and results
+
 ### System Architecture
 
 ```

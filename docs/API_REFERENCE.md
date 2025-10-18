@@ -6,6 +6,12 @@ Complete REST and WebSocket API documentation for the CryoMamba GPU inference se
 **API Version**: v1  
 **Last Updated**: October 2025
 
+## System Flow Overview
+
+![CryoMamba Flow](CryoMambaFlow.png)
+
+The API follows the flow shown above: upload → create job → start inference → stream results.
+
 ---
 
 ## Table of Contents
