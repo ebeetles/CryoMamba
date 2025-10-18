@@ -36,9 +36,9 @@ source venv/bin/activate
 # Install server dependencies
 pip install -r requirements.txt
 
-# Set up environment variables
-export NNUNET_RESULTS="/path/to/pretrained_weights"
-export CRYOMAMBA_DATA_DIR="./data"
+# Optional: Set up environment variables (defaults work fine)
+# export NNUNET_MODEL_DIR="/path/to/pretrained_weights"
+# export NNUNET_DEVICE="cpu"  # Use "cuda" if you have GPU
 
 # Start the server
 python -m uvicorn app.main:app --host 0.0.0.0 --port 8000
@@ -148,29 +148,31 @@ docker-compose up -d
 docker-compose logs -f
 ```
 
-#### Configuration
+#### Configuration (Optional)
 
-Create `.env` file in project root:
+The server works with defaults, but you can customize with environment variables:
 
 ```bash
+# Optional: Create .env file in project root
 # nnU-Net configuration
-NNUNET_RESULTS=/path/to/pretrained_weights
-NNUNET_RAW=/path/to/nnunet_raw
-NNUNET_PREPROCESSED=/path/to/nnunet_preprocessed
+NNUNET_MODEL_DIR=/path/to/pretrained_weights  # Default: uses your current path
+NNUNET_DEVICE=cpu  # Default: "cuda" (use "cpu" if no GPU)
 
-# Server configuration
-CRYOMAMBA_DATA_DIR=./data
-CRYOMAMBA_HOST=0.0.0.0
-CRYOMAMBA_PORT=8000
+# Server configuration  
+HOST=0.0.0.0  # Default: 0.0.0.0
+PORT=8000     # Default: 8000
+DEBUG=false   # Default: false
 
-# GPU configuration
+# Upload settings
+UPLOAD_BASE_DIR=/tmp/cryomamba_uploads  # Default: /tmp/cryomamba_uploads
+MAX_UPLOAD_SIZE_GB=20  # Default: 20 GB
+
+# GPU configuration (if using GPU)
 CUDA_VISIBLE_DEVICES=0
 PYTORCH_CUDA_ALLOC_CONF=max_split_size_mb:512
-
-# Optional: Authentication
-JWT_SECRET_KEY=your-secret-key-here
-TOKEN_EXPIRY_HOURS=24
 ```
+
+**Note**: All environment variables are optional - the server will work with sensible defaults!
 
 ### Desktop Client Installation
 
